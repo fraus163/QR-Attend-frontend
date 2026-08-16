@@ -1,20 +1,24 @@
-import AdminPage from "./pages/AdminPage.tsx";
 import {BrowserRouter, Navigate, Route, Routes} from "react-router-dom";
-import StudentPage from "./pages/StudentPage.tsx";
-import TeacherPage from "./pages/TeacherPage.tsx";
+import MainPage from "./pages/MainPage.tsx";
 import LoginPage from "./pages/LoginPage.tsx";
-import SubjectTab from "./components/SubjectTab.tsx";
+import {StudentScheduleTab} from "./components/StudentScheduleTab.tsx";
+import StudentAttendanceTab from "./components/StudentAttendanceTab.tsx";
+import TeacherScheduleTab from "./components/TeacherScheduleTab.tsx";
+import TeacherAttendanceTab from "./components/TeacherAttendanceTab.tsx";
 
 function App() {
   return (
       <BrowserRouter>
         <Routes>
             <Route path="/login" element={<LoginPage/>}/>
-            <Route path="/student" element={<StudentPage/>}/>
-            <Route path="/admin" element={<AdminPage/>}>
-                <Route path="subjects" element={<SubjectTab/>}/>
+            <Route path="/student" element={<MainPage role='STUDENT'/>}>
+                <Route path="schedule" element={<StudentScheduleTab/>}/>
+                <Route path="attendance" element={<StudentAttendanceTab/>}/>
             </Route>
-            <Route path="/teacher" element={<TeacherPage/>}/>
+            <Route path="/teacher" element={<MainPage role='TEACHER'/>}>
+                <Route path="schedule" element={<TeacherScheduleTab/>}/>
+                <Route path="attendance" element={<TeacherAttendanceTab/>}/>
+            </Route>
             <Route path="*" element={<Navigate to="/login" replace />} />
         </Routes>
       </BrowserRouter>

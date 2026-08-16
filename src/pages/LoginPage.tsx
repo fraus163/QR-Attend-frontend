@@ -11,16 +11,13 @@ export default function LoginPage() {
     const handleSubmit = async (event) => {
         event.preventDefault();
         const role = await authApi.login({email: email, password: password});
-        if (role === 'ADMIN') {
-            navigate('/admin');
-        } else if (role === 'STUDENT') {
+        if (role === 'STUDENT') {
             navigate('/student');
         } else if (role === 'TEACHER') {
             navigate('/teacher');
         } else {
             navigate('/login');
         }
-        console.log('Email:', email, 'Password:', password);
     };
 
     return (
@@ -45,11 +42,9 @@ export default function LoginPage() {
                         label="Password"
                         type="password"
                     />
-                    {/*<Checkbox value="remember">Remember me</Checkbox>*/}
                     <Box sx={{ display: 'flex', justifyContent: 'center', marginTop: 2 }}>
                         <Button type="submit" variant="contained">Войти</Button>
                     </Box>
-                    {/*<Link href="/forgot-password">Forgot password?</Link>*/}
                 </form>
             </Box>
         </Container>

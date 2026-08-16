@@ -9,15 +9,15 @@ import {
     Typography
 } from "@mui/material";
 import MenuIcon from '@mui/icons-material/Menu';
-import {type FC, type JSX, useState} from "react";
+import {type FC, useState} from "react";
 import DrawerList from "../components/DrawerList.tsx";
 import {Outlet} from "react-router-dom";
 
 interface LayoutProps {
-    tabs: JSX.Element[];
+    role: string;
 }
 
-const Layout: FC<LayoutProps> = ({tabs}) => {
+const Layout: FC<LayoutProps> = ({ role }) => {
     const [open, setOpen] = useState(false);
 
     const toggleDrawer = (newOpen: boolean) => {
@@ -48,7 +48,7 @@ const Layout: FC<LayoutProps> = ({tabs}) => {
             </Box>
             <Stack direction="column" spacing={2}>
                 <Drawer open={open} onClose={() => toggleDrawer(false)}>
-                    <DrawerList toggleDrawer={toggleDrawer} tabs={tabs}/>
+                    <DrawerList toggleDrawer={toggleDrawer} role={role}/>
                 </Drawer>
             </Stack>
             <Outlet/>
