@@ -150,14 +150,12 @@ const StudentAttendanceTab: React.FC<StudentAttendanceTabProps> = () => {
         const file = event.target.files?.[0];
         if (!file) return;
 
-        // Проверка типа файла
         if (!file.type.startsWith('image/')) {
             setSnackbarMessage('Можно загружать только изображения');
             setSnackbarOpen(true);
             return;
         }
 
-        // Проверка размера (макс 5MB)
         if (file.size > 5 * 1024 * 1024) {
             setSnackbarMessage('Файл не должен превышать 5MB');
             setSnackbarOpen(true);
@@ -171,7 +169,6 @@ const StudentAttendanceTab: React.FC<StudentAttendanceTabProps> = () => {
             const formData = new FormData();
             formData.append('file', file);
 
-            // Эмулируем прогресс загрузки
             const interval = setInterval(() => {
                 setUploadProgress((prev) => {
                     if (prev >= 90) {
@@ -203,14 +200,12 @@ const StudentAttendanceTab: React.FC<StudentAttendanceTabProps> = () => {
         }
     };
 
-    // Удалить прикрепленный файл
     const handleRemoveFile = () => {
         setEditLink('');
         setSnackbarMessage('Файл удален');
         setSnackbarOpen(true);
     };
 
-    // Обновление (только комментарий и справка)
     const handleUpdateAttendance = async () => {
         if (!selectedRecord) return;
 
@@ -260,7 +255,8 @@ const StudentAttendanceTab: React.FC<StudentAttendanceTabProps> = () => {
                                 <TableRow>
                                     <TableCell>Дата</TableCell>
                                     <TableCell>Время</TableCell>
-                                    <TableCell>Занятие</TableCell>
+                                    <TableCell>Предмет</TableCell>
+                                    <TableCell>Преподаватель</TableCell>
                                     <TableCell>Отметка</TableCell>
                                     <TableCell>Комментарий</TableCell>
                                     <TableCell>Справка</TableCell>
@@ -276,7 +272,14 @@ const StudentAttendanceTab: React.FC<StudentAttendanceTabProps> = () => {
                                                 ? `${record.lessonTimeFrom} - ${record.lessonTimeTo}`
                                                 : '-'}
                                         </TableCell>
-                                        <TableCell>{record.subjectName || `Занятие #${record.lessonId}`}</TableCell>
+                                        <TableCell>
+                                            <Typography variant="body2" fontWeight={500}>
+                                                {record.subjectName || `Занятие #${record.lessonId}`}
+                                            </Typography>
+                                        </TableCell>
+                                        <TableCell>
+                                            {record.teacherFullName || '-'}
+                                        </TableCell>
                                         <TableCell>
                                             <Chip
                                                 icon={getMarkIcon(record.mark)}

@@ -1,5 +1,6 @@
 export type AttendanceType = 'PRESENT' | 'ABSENT' | 'LATE' | 'EXCUSED';
 
+// types/Attendance.ts
 export interface AttendanceResponse {
     id: number;
     studentId: number;
@@ -9,8 +10,9 @@ export interface AttendanceResponse {
     lessonTimeFrom?: string;
     lessonTimeTo?: string;
     subjectName?: string;
+    teacherFullName?: string;  // Добавить поле для преподавателя
     mark: AttendanceType;
-    link?: string;        // Ссылка на фото справки
+    link?: string;
     comment?: string;
 }
 

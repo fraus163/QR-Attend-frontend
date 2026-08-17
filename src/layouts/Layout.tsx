@@ -2,56 +2,39 @@ import {
     AppBar,
     Box,
     Button,
-    Drawer,
-    IconButton,
-    Stack,
     Toolbar,
     Typography
 } from "@mui/material";
-import MenuIcon from '@mui/icons-material/Menu';
-import {type FC, useState} from "react";
-import DrawerList from "../components/DrawerList.tsx";
-import {Outlet} from "react-router-dom";
+import {type FC} from "react";
+import {Outlet, useNavigate} from "react-router-dom";
+import {authApi} from "../api/authApi.ts";
+import ScheduleTab from "../components/ScheduleTab.tsx";
 
 interface LayoutProps {
-    role: string;
+    role: 'STUDENT' | 'TEACHER';
 }
 
 const Layout: FC<LayoutProps> = ({ role }) => {
-    const [open, setOpen] = useState(false);
+    const navigate = useNavigate();
 
-    const toggleDrawer = (newOpen: boolean) => {
-        setOpen(newOpen);
-    };
+    const onLogout = () => {
+        authApi.logout();
+        navigate("/login")
+    }
 
     return (
         <>
             <Box sx={{ flexGrow: 1 }}>
                 <AppBar position="static">
                     <Toolbar>
-                        <IconButton
-                            onClick={() => toggleDrawer(true)}
-                            size="large"
-                            edge="start"
-                            color="inherit"
-                            aria-label="menu"
-                            sx={{ mr: 2 }}
-                        >
-                            <MenuIcon />
-                        </IconButton>
                         <Typography variant="h6" component="div" sx={{ flexGrow: 1 }}>
                             Учет посещаемости
                         </Typography>
-                        <Button color="inherit">Выйти</Button>
+                        <Button onClick={onLogout} color="inherit">Выйти</Button>
                     </Toolbar>
                 </AppBar>
             </Box>
-            <Stack direction="column" spacing={2}>
-                <Drawer open={open} onClose={() => toggleDrawer(false)}>
-                    <DrawerList toggleDrawer={toggleDrawer} role={role}/>
-                </Drawer>
-            </Stack>
-            <Outlet/>
+            <ScheduleTab userRole={role}/>
         </>
     );
 };

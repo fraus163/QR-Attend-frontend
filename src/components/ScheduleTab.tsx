@@ -56,7 +56,7 @@ import TeacherAttendanceTab from "./TeacherAttendanceTab.tsx";
 interface ScheduleComponentProps {
     pageSize?: number;
     onLessonClick?: (lesson: LessonResponse) => void;
-    userRole?: 'STUDENT' | 'TEACHER' | 'ADMIN';
+    userRole?: 'STUDENT' | 'TEACHER';
 }
 
 interface GroupedLessons {

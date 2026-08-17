@@ -24,9 +24,9 @@ export default function LoginPage() {
 
             // Редирект в зависимости от роли
             if (role === 'STUDENT') {
-                navigate('/student/schedule');
+                navigate('/student');
             } else if (role === 'TEACHER') {
-                navigate('/teacher/schedule');
+                navigate('/teacher');
             } else {
                 navigate('/login');
             }

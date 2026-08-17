@@ -1,10 +1,7 @@
 import { BrowserRouter, Navigate, Route, Routes } from "react-router-dom";
-import MainPage from "./pages/MainPage";
 import LoginPage from "./pages/LoginPage";
-import StudentAttendanceTab from "./components/StudentAttendanceTab";
-import TeacherAttendanceTab from "./components/TeacherAttendanceTab";
-import ScheduleTab from "./components/ScheduleTab";
 import ProtectedRoute from "./components/ProtectedRoute";
+import Layout from "./layouts/Layout.tsx";
 
 function App() {
     return (
@@ -13,19 +10,11 @@ function App() {
                 <Route path="/login" element={<LoginPage />} />
 
                 <Route element={<ProtectedRoute allowedRoles={['STUDENT']} />}>
-                    <Route path="/student" element={<MainPage role="STUDENT" />}>
-                        <Route path="schedule" element={<ScheduleTab userRole="STUDENT" />} />
-                        <Route path="attendance" element={<StudentAttendanceTab />} />
-                        <Route index element={<Navigate to="schedule" replace />} />
-                    </Route>
+                    <Route path="/student" element={<Layout role="STUDENT" />}/>
                 </Route>
 
                 <Route element={<ProtectedRoute allowedRoles={['TEACHER']} />}>
-                    <Route path="/teacher" element={<MainPage role="TEACHER" />}>
-                        <Route path="schedule" element={<ScheduleTab userRole="TEACHER" />} />
-                        <Route path="attendance" element={<TeacherAttendanceTab />} />
-                        <Route index element={<Navigate to="schedule" replace />} />
-                    </Route>
+                    <Route path="/teacher" element={<Layout role="TEACHER" />}/>
                 </Route>
 
                 <Route path="*" element={<Navigate to="/login" replace />} />
