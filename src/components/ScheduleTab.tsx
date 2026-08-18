@@ -21,7 +21,8 @@ import {
     Snackbar,
     IconButton,
     Tab,
-    Tabs, TextField,
+    Tabs,
+    TextField,
 } from '@mui/material';
 import {
     DatePicker,
@@ -50,8 +51,9 @@ import type {
     QRCodeResponse,
 } from '../types/Lesson';
 import QRCode from 'qrcode';
-import StudentAttendanceTab from "./StudentAttendanceTab.tsx";
-import TeacherAttendanceTab from "./TeacherAttendanceTab.tsx";
+import QRScanner from './QRScanner';
+import StudentAttendanceTab from "./StudentAttendanceTab";
+import TeacherAttendanceTab from "./TeacherAttendanceTab";
 
 interface ScheduleComponentProps {
     pageSize?: number;
@@ -64,10 +66,10 @@ interface GroupedLessons {
 }
 
 const ScheduleTab: React.FC<ScheduleComponentProps> = ({
-                                                                 pageSize = 10,
-                                                                 onLessonClick,
-                                                                 userRole = 'STUDENT',
-                                                             }) => {
+                                                           pageSize = 10,
+                                                           onLessonClick,
+                                                           userRole = 'STUDENT',
+                                                       }) => {
     // ========== ОСНОВНЫЕ СОСТОЯНИЯ ==========
     const [lessons, setLessons] = useState<LessonResponse[]>([]);
     const [loading, setLoading] = useState<boolean>(false);
@@ -82,7 +84,7 @@ const ScheduleTab: React.FC<ScheduleComponentProps> = ({
     const [qrDialogOpen, setQrDialogOpen] = useState<boolean>(false);
     const [selectedLesson, setSelectedLesson] = useState<LessonResponse | null>(null);
     const [qrTokenData, setQrTokenData] = useState<QRCodeResponse | null>(null);
-    const [qrTimeLeft, setQrTimeLeft] = useState<number>(600);
+    const [qrTimeLeft, setQrTimeLeft] = useState<number>(5);
     const [qrImageUrl, setQrImageUrl] = useState<string>('');
     const [isCompleting, setIsCompleting] = useState<boolean>(false);
 
@@ -150,8 +152,8 @@ const ScheduleTab: React.FC<ScheduleComponentProps> = ({
     const generateQRCode = useCallback(async (text: string) => {
         try {
             const url = await QRCode.toDataURL(text, {
-                width: 250,
-                margin: 2,
+                width: 300,
+                margin: 4,
                 color: { dark: '#000000', light: '#ffffff' },
                 errorCorrectionLevel: 'H',
             });
@@ -210,11 +212,12 @@ const ScheduleTab: React.FC<ScheduleComponentProps> = ({
     const canScanLesson = (lesson: LessonResponse): boolean => {
         if (userRole !== 'STUDENT') return false;
         if (lesson.status !== 'IN_PROGRESS') return false;
-        if (lesson.isMarked) return false; // ✅ Уже отметился
+        if (lesson.isMarked) return false;
         return true;
     };
 
     // ========== НАЧАТЬ ЗАНЯТИЕ (ПРЕПОДАВАТЕЛЬ) ==========
+    // В handleStartLesson:
     const handleStartLesson = async (lesson: LessonResponse) => {
         setSelectedLesson(lesson);
         setQrDialogOpen(true);
@@ -222,42 +225,38 @@ const ScheduleTab: React.FC<ScheduleComponentProps> = ({
         try {
             const response = await lessonsApi.startLesson(lesson.id);
             setQrTokenData(response);
-            setQrTimeLeft(response.ttl);
+            setQrTimeLeft(response.ttl || 5);
 
             setLessons(prev => prev.map(l =>
                 l.id === lesson.id ? { ...l, status: 'IN_PROGRESS' } : l
             ));
 
-            // Таймер
-            if (timerIntervalRef.current) clearInterval(timerIntervalRef.current);
-            const timer = setInterval(() => {
+            // ✅ ОДИН ИНТЕРВАЛ - обновляет и таймер и QR
+            if (qrIntervalRef.current) clearInterval(qrIntervalRef.current);
+            const mainInterval = setInterval(async () => {
+                // Обновляем таймер
                 setQrTimeLeft((prev) => {
                     if (prev <= 1) {
-                        clearInterval(timer);
-                        handleCloseQRDialog();
-                        setSnackbarMessage('Время сессии истекло');
-                        setSnackbarOpen(true);
-                        return 0;
+                        // Когда таймер доходит до 0 - обновляем QR
+                        refreshQR(lesson.id);
+                        return 5; // Сбрасываем на 5 секунд
                     }
                     return prev - 1;
                 });
             }, 1000);
-            timerIntervalRef.current = timer;
+            qrIntervalRef.current = mainInterval;
 
-            // Обновление QR
-            if (qrIntervalRef.current) clearInterval(qrIntervalRef.current);
-            const qrUpdateInterval = setInterval(async () => {
+            // ✅ Функция обновления QR
+            const refreshQR = async (id: number) => {
                 try {
-                    const newResponse = await lessonsApi.startLesson(lesson.id);
+                    const newResponse = await lessonsApi.startLesson(id);
                     if (newResponse.token !== qrTokenData?.token) {
                         setQrTokenData(newResponse);
-                        setQrTimeLeft(newResponse.ttl);
                     }
                 } catch (error) {
                     console.error('Error refreshing QR:', error);
                 }
-            }, 5000);
-            qrIntervalRef.current = qrUpdateInterval;
+            };
 
             setSnackbarMessage('Занятие начато! QR код готов');
             setSnackbarOpen(true);
@@ -266,6 +265,24 @@ const ScheduleTab: React.FC<ScheduleComponentProps> = ({
             setSnackbarMessage('Ошибка при начале занятия');
             setSnackbarOpen(true);
             handleCloseQRDialog();
+        }
+    };
+
+// В handleCloseQRDialog
+    const handleCloseQRDialog = () => {
+        setQrDialogOpen(false);
+        setSelectedLesson(null);
+        setQrTokenData(null);
+        setQrImageUrl('');
+        setQrTimeLeft(5);
+
+        if (qrIntervalRef.current) {
+            clearInterval(qrIntervalRef.current);
+            qrIntervalRef.current = null;
+        }
+        if (timerIntervalRef.current) {
+            clearInterval(timerIntervalRef.current);
+            timerIntervalRef.current = null;
         }
     };
 
@@ -292,24 +309,34 @@ const ScheduleTab: React.FC<ScheduleComponentProps> = ({
     };
 
     // ========== ЗАКРЫТЬ QR ДИАЛОГ ==========
-    const handleCloseQRDialog = () => {
-        setQrDialogOpen(false);
-        setSelectedLesson(null);
-        setQrTokenData(null);
-        setQrImageUrl('');
-        setQrTimeLeft(600);
 
-        if (qrIntervalRef.current) {
-            clearInterval(qrIntervalRef.current);
-            qrIntervalRef.current = null;
+    // ========== СКАНЕР QR (ДЛЯ СТУДЕНТА) ==========
+    const handleScan = (data: string) => {
+        console.log('📸 QR DATA RAW:', data);
+
+        if (!data) {
+            console.log('❌ Пустые данные');
+            setScanError('Пустой QR код');
+            return;
         }
-        if (timerIntervalRef.current) {
-            clearInterval(timerIntervalRef.current);
-            timerIntervalRef.current = null;
+
+        try {
+            // Пробуем парсить как JSON
+            const qrData = JSON.parse(data);
+            console.log('📸 PARSED:', qrData);
+
+            if (qrData.token) {
+                handleScanQR(qrData.token);
+            } else {
+                setScanError('Неверный формат QR кода');
+            }
+        } catch (e) {
+            // Если не JSON - значит просто токен
+            console.log('📸 Токен (не JSON):', data);
+            handleScanQR(data);
         }
     };
 
-    // ========== ОТКРЫТЬ СКАНЕР (СТУДЕНТ) ==========
     const handleOpenScanner = (lesson: LessonResponse) => {
         setScannerLesson(lesson);
         setScannerDialogOpen(true);
@@ -317,7 +344,6 @@ const ScheduleTab: React.FC<ScheduleComponentProps> = ({
         setScannedToken('');
     };
 
-    // ========== ЗАКРЫТЬ СКАНЕР ==========
     const handleCloseScanner = () => {
         setScannerDialogOpen(false);
         setScannerLesson(null);
@@ -326,10 +352,18 @@ const ScheduleTab: React.FC<ScheduleComponentProps> = ({
         setIsScanning(false);
     };
 
-    // ========== СКАНИРОВАТЬ QR (СТУДЕНТ) ==========
-    const handleScanQR = async () => {
-        if (!scannerLesson || !scannedToken) {
-            setScanError('Введите или отсканируйте QR код');
+    const handleScanQR = async (token: string) => {
+        console.log('📸 Обработка токена:', token);
+
+        if (!scannerLesson) {
+            console.log('❌ Нет занятия');
+            setScanError('Ошибка: занятие не выбрано');
+            return;
+        }
+
+        if (!token) {
+            console.log('❌ Пустой токен');
+            setScanError('Недействительный QR код');
             return;
         }
 
@@ -337,22 +371,28 @@ const ScheduleTab: React.FC<ScheduleComponentProps> = ({
         setScanError(null);
 
         try {
+            console.log('📤 Отправка на сервер:', { token, lessonId: scannerLesson.id });
+
             await lessonsApi.scanQR({
-                token: scannedToken,
+                token: token,
                 lessonId: scannerLesson.id,
             });
 
-            // ✅ Обновляем статус - студент отметился
+            console.log('✅ Отметка успешна');
+
             setLessons(prev => prev.map(l =>
                 l.id === scannerLesson.id ? { ...l, isMarked: true } : l
             ));
 
             setSnackbarMessage('Вы успешно отметились на занятии!');
             setSnackbarOpen(true);
+
+            // Закрываем сканер
             handleCloseScanner();
             loadLessons();
+
         } catch (error: any) {
-            console.error('Error scanning QR:', error);
+            console.error('❌ Ошибка сканирования:', error);
 
             if (error?.response?.status === 400) {
                 setScanError(error.response.data?.message || 'Недействительный QR код');
@@ -416,7 +456,6 @@ const ScheduleTab: React.FC<ScheduleComponentProps> = ({
     // ========== РЕНДЕР КОНТЕНТА ==========
     const renderScheduleContent = () => (
         <>
-            {/* Фильтры */}
             <Paper elevation={2} sx={{ p: 3, mb: 4, borderRadius: 2 }}>
                 <Grid container spacing={2} alignItems="center">
                     <Grid item xs={12} md={5}>
@@ -457,7 +496,6 @@ const ScheduleTab: React.FC<ScheduleComponentProps> = ({
                 </Grid>
             </Paper>
 
-            {/* Статистика */}
             {!loading && !error && lessons.length > 0 && (
                 <Fade in={!loading}>
                     <Box sx={{ mb: 2, display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
@@ -471,7 +509,6 @@ const ScheduleTab: React.FC<ScheduleComponentProps> = ({
                 </Fade>
             )}
 
-            {/* Список занятий */}
             <Box sx={{ position: 'relative', minHeight: 200 }}>
                 {loading && (
                     <Box sx={{ display: 'flex', justifyContent: 'center', alignItems: 'center', minHeight: 300 }}>
@@ -630,7 +667,6 @@ const ScheduleTab: React.FC<ScheduleComponentProps> = ({
                                                                         sx={{ fontWeight: 500 }}
                                                                     />
 
-                                                                    {/* ===== ДЛЯ ПРЕПОДАВАТЕЛЯ ===== */}
                                                                     {userRole === 'TEACHER' && (
                                                                         <>
                                                                             {isDone ? (
@@ -655,7 +691,6 @@ const ScheduleTab: React.FC<ScheduleComponentProps> = ({
                                                                         </>
                                                                     )}
 
-                                                                    {/* ===== ДЛЯ СТУДЕНТА ===== */}
                                                                     {userRole === 'STUDENT' && (
                                                                         <>
                                                                             {isDone ? (
@@ -696,7 +731,6 @@ const ScheduleTab: React.FC<ScheduleComponentProps> = ({
                 )}
             </Box>
 
-            {/* Пагинация */}
             {!loading && !error && totalPages > 1 && (
                 <Fade in={!loading}>
                     <Box sx={{ mt: 4, display: 'flex', justifyContent: 'center' }}>
@@ -719,7 +753,6 @@ const ScheduleTab: React.FC<ScheduleComponentProps> = ({
     return (
         <LocalizationProvider dateAdapter={AdapterDayjs} adapterLocale="ru">
             <Box sx={{ maxWidth: 1200, margin: '0 auto', padding: 3 }}>
-                {/* Заголовок */}
                 <Box sx={{ display: 'flex', alignItems: 'center', mb: 3 }}>
                     <Schedule sx={{ fontSize: 32, color: 'primary.main', mr: 2 }} />
                     <Typography variant="h4" component="h1" sx={{ fontWeight: 700, color: 'primary.main' }}>
@@ -742,7 +775,6 @@ const ScheduleTab: React.FC<ScheduleComponentProps> = ({
                     </Box>
                 )}
 
-                {/* Для преподавателя тоже добавляем вкладки */}
                 {userRole === 'TEACHER' && (
                     <Box sx={{ borderBottom: 1, borderColor: 'divider', mb: 3 }}>
                         <Tabs value={activeTab} onChange={(_, v) => setActiveTab(v)}>
@@ -752,7 +784,6 @@ const ScheduleTab: React.FC<ScheduleComponentProps> = ({
                     </Box>
                 )}
 
-                {/* Контент */}
                 {userRole === 'STUDENT' && activeTab === 1 ? (
                     <StudentAttendanceTab />
                 ) : userRole === 'TEACHER' && activeTab === 1 ? (
@@ -760,7 +791,6 @@ const ScheduleTab: React.FC<ScheduleComponentProps> = ({
                 ) : (
                     renderScheduleContent()
                 )}
-
             </Box>
 
             {/* ===== QR ДИАЛОГ (ДЛЯ ПРЕПОДАВАТЕЛЯ) ===== */}
@@ -778,17 +808,12 @@ const ScheduleTab: React.FC<ScheduleComponentProps> = ({
                         <Typography variant="body2" color="text.secondary">
                             {selectedLesson?.subjectName} - {formatTime(selectedLesson?.timeFrom || '')}
                         </Typography>
-                        {qrTokenData && (
-                            <Typography variant="caption" color="text.secondary">
-                                TTL: {qrTokenData.ttl} сек
-                            </Typography>
-                        )}
                     </Box>
                     <Chip
                         icon={<AccessTime />}
-                        label={formatTimer(qrTimeLeft)}
-                        color={qrTimeLeft < 60 ? 'error' : 'primary'}
-                        sx={{ fontWeight: 600 }}
+                        label={qrTimeLeft > 0 ? `${qrTimeLeft}с` : 'Обновляется...'}
+                        color={qrTimeLeft > 2 ? 'success' : qrTimeLeft > 0 ? 'warning' : 'info'}
+                        sx={{ fontWeight: 600, minWidth: '80px' }}
                     />
                 </DialogTitle>
 
@@ -833,35 +858,36 @@ const ScheduleTab: React.FC<ScheduleComponentProps> = ({
 
                 <DialogContent>
                     <Box sx={{ display: 'flex', flexDirection: 'column', alignItems: 'center', py: 3 }}>
-                        {/* Заглушка сканера */}
-                        <Box sx={{ width: 300, height: 200, backgroundColor: '#000', borderRadius: 2, display: 'flex', alignItems: 'center', justifyContent: 'center', mb: 2 }}>
-                            <CameraAlt sx={{ fontSize: 60, color: 'white', opacity: 0.5 }} />
-                        </Box>
-
-                        <TextField
-                            fullWidth
-                            label="Введите токен (для тестирования)"
-                            value={scannedToken}
-                            onChange={(e) => setScannedToken(e.target.value)}
-                            placeholder="Вставьте токен из QR кода"
-                            sx={{ mb: 2 }}
+                        <QRScanner
+                            onScan={handleScan}
+                            onError={(error) => {
+                                setScanError(error);
+                            }}
                         />
 
                         {scanError && (
-                            <Alert severity="error" sx={{ width: '100%', mb: 2 }}>{scanError}</Alert>
+                            <Alert severity="error" sx={{ width: '100%', mt: 2 }}>{scanError}</Alert>
                         )}
 
-                        <Typography variant="body2" color="text.secondary" align="center">
-                            Наведите камеру на QR код или введите токен вручную
+                        <Typography variant="body2" color="text.secondary" align="center" sx={{ mt: 2 }}>
+                            Или введите токен вручную
                         </Typography>
+
+                        <TextField
+                            fullWidth
+                            label="Токен"
+                            value={scannedToken}
+                            onChange={(e) => setScannedToken(e.target.value)}
+                            placeholder="Вставьте токен из QR кода"
+                            sx={{ mt: 1, mb: 2 }}
+                        />
 
                         <Button
                             variant="contained"
                             color="primary"
                             fullWidth
-                            onClick={handleScanQR}
+                            onClick={() => handleScanQR(scannedToken)}
                             disabled={isScanning || !scannedToken}
-                            sx={{ mt: 2 }}
                         >
                             {isScanning ? 'Отправка...' : 'Отметиться'}
                         </Button>
@@ -869,7 +895,6 @@ const ScheduleTab: React.FC<ScheduleComponentProps> = ({
                 </DialogContent>
             </Dialog>
 
-            {/* Уведомления */}
             <Snackbar
                 open={snackbarOpen}
                 autoHideDuration={3000}

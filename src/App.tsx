@@ -2,8 +2,13 @@ import { BrowserRouter, Navigate, Route, Routes } from "react-router-dom";
 import LoginPage from "./pages/LoginPage";
 import ProtectedRoute from "./components/ProtectedRoute";
 import Layout from "./layouts/Layout.tsx";
+import VConsole from 'vconsole';
 
 function App() {
+    if (import.meta.env.DEV) {
+        new VConsole();
+    }
+
     return (
         <BrowserRouter>
             <Routes>
