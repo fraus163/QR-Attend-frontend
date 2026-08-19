@@ -1,4 +1,4 @@
-import { api } from "./axiosInstance.ts";
+import { api } from './axiosInstance';
 
 export interface LoginRequest {
     email: string;
@@ -6,37 +6,41 @@ export interface LoginRequest {
 }
 
 export interface AuthResponse {
-    jwtToken: string;
+    accessToken: string;
+    tokeType?: string;
     role: string;
 }
 
 export const authApi = {
-    login: async (credentials: LoginRequest): Promise<{ token: string; role: string }> => {
+    login: async (credentials: LoginRequest): Promise<AuthResponse> => {
         const response = await api.post<AuthResponse>('/auth/login', credentials);
-        const { jwtToken, role } = response.data;
+        const { accessToken, role } = response.data;
 
-        localStorage.setItem('token', jwtToken);
-        localStorage.setItem('userRole', role);
-        console.log('Token:', jwtToken);
-        console.log('Role:', role);
+        // Синхронно сохраняем в localStorage
+        if (accessToken) {
+            localStorage.setItem('token', accessToken);
+        }
+        if (role) {
+            localStorage.setItem('userRole', role);
+        }
 
-        return { token: jwtToken, role };
+        return response.data;
     },
 
-    logout: () => {
+    logout: (): void => {
         localStorage.removeItem('token');
         localStorage.removeItem('userRole');
     },
 
-    isAuthenticated: (): boolean => {
-        return !!localStorage.getItem('token');
+    getToken: (): string | null => {
+        return localStorage.getItem('token');
     },
 
     getRole: (): string | null => {
         return localStorage.getItem('userRole');
     },
 
-    getToken: (): string | null => {
-        return localStorage.getItem('token');
-    }
+    isAuthenticated: (): boolean => {
+        return !!localStorage.getItem('token');
+    },
 };

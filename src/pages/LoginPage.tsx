@@ -1,7 +1,16 @@
-import { useState } from 'react';
-import { Container, Box, TextField, Button, Typography, Alert, CircularProgress } from '@mui/material';
-import { authApi } from "../api/authApi.ts";
-import { useNavigate } from "react-router-dom";
+import React, { useState } from 'react';
+import {
+    Container,
+    Box,
+    Paper,
+    TextField,
+    Button,
+    Typography,
+    Alert,
+    CircularProgress,
+} from '@mui/material';
+import { useNavigate } from 'react-router-dom';
+import { authApi } from '../api/authApi';
 
 export default function LoginPage() {
     const [email, setEmail] = useState('');
@@ -16,75 +25,103 @@ export default function LoginPage() {
         setError(null);
 
         try {
-            const { token, role } = await authApi.login({ email, password });
+            const { role } = await authApi.login({
+                email: email.trim(),
+                password,
+            });
 
-            // Токен и роль уже сохранились в authApi, но для уверенности:
-            localStorage.setItem('token', token);
-            localStorage.setItem('userRole', role);
+            const normalizedRole = role.replace('ROLE_', '').toUpperCase();
 
-            // Редирект в зависимости от роли
-            if (role === 'STUDENT') {
+            if (normalizedRole === 'STUDENT') {
                 navigate('/student');
-            } else if (role === 'TEACHER') {
+            } else if (normalizedRole === 'TEACHER') {
                 navigate('/teacher');
             } else {
-                navigate('/login');
+                navigate('/');
             }
         } catch (err: any) {
-            setError(err.response?.data?.message || 'Ошибка входа. Проверьте email и пароль.');
-            console.error('Login error:', err);
+            const serverMessage = err.response?.data?.message;
+            setError(serverMessage || 'Ошибка входа. Проверьте email и пароль.');
         } finally {
             setLoading(false);
         }
     };
 
     return (
-        <Container maxWidth="sm">
-            <Box sx={{ display: 'flex', flexDirection: 'column', alignItems: 'center', marginTop: 8 }}>
-                <Typography variant="h5" gutterBottom>
-                    Учет успеваемости
-                </Typography>
+        <Container maxWidth="xs">
+            <Box
+                sx={{
+                    minHeight: '80vh',
+                    display: 'flex',
+                    flexDirection: 'column',
+                    justifyContent: 'center',
+                    alignItems: 'center',
+                }}
+            >
+                <Paper
+                    elevation={3}
+                    sx={{
+                        p: 4,
+                        width: '100%',
+                        borderRadius: 2,
+                        display: 'flex',
+                        flexDirection: 'column',
+                        alignItems: 'center',
+                    }}
+                >
+                    <Typography component="h1" variant="h5" fontWeight={600} gutterBottom>
+                        Учет успеваемости
+                    </Typography>
+                    <Typography variant="body2" color="text.secondary" sx={{ mb: 3 }}>
+                        Войдите с помощью вашей учетной записи
+                    </Typography>
 
-                {error && (
-                    <Alert severity="error" sx={{ width: '100%', mt: 2 }}>
-                        {error}
-                    </Alert>
-                )}
+                    {error && (
+                        <Alert severity="error" sx={{ width: '100%', mb: 2 }}>
+                            {error}
+                        </Alert>
+                    )}
 
-                <form onSubmit={handleSubmit} style={{ width: '100%' }}>
-                    <TextField
-                        onChange={(e) => setEmail(e.target.value)}
-                        margin="normal"
-                        required
-                        fullWidth
-                        label="Email"
-                        type="email"
-                        autoComplete="email"
-                        autoFocus
-                        value={email}
-                        disabled={loading}
-                    />
-                    <TextField
-                        onChange={(e) => setPassword(e.target.value)}
-                        margin="normal"
-                        required
-                        fullWidth
-                        label="Пароль"
-                        type="password"
-                        value={password}
-                        disabled={loading}
-                    />
-                    <Box sx={{ display: 'flex', justifyContent: 'center', marginTop: 2 }}>
+                    <Box component="form" onSubmit={handleSubmit} sx={{ width: '100%' }}>
+                        <TextField
+                            margin="normal"
+                            required
+                            fullWidth
+                            id="email"
+                            label="Email"
+                            name="email"
+                            type="email"
+                            autoComplete="email"
+                            autoFocus
+                            value={email}
+                            onChange={(e) => setEmail(e.target.value)}
+                            disabled={loading}
+                        />
+                        <TextField
+                            margin="normal"
+                            required
+                            fullWidth
+                            name="password"
+                            label="Пароль"
+                            type="password"
+                            id="password"
+                            autoComplete="current-password"
+                            value={password}
+                            onChange={(e) => setPassword(e.target.value)}
+                            disabled={loading}
+                        />
                         <Button
                             type="submit"
+                            fullWidth
                             variant="contained"
+                            size="large"
                             disabled={loading}
-                            sx={{ minWidth: 120 }}
+                            sx={{ mt: 3, mb: 1, py: 1.2 }}
                         >
-                            {loading ? <CircularProgress size={24} /> : 'Войти'}
+                            {loading ? <CircularProgress size={24} color="inherit" /> : 'Войти'}
                         </Button>
                     </Box>
-                </form>
+                </Paper>
             </Box>
         </Container>
     );

@@ -1,14 +1,8 @@
-import {
-    AppBar,
-    Box,
-    Button,
-    Toolbar,
-    Typography
-} from "@mui/material";
-import {type FC} from "react";
-import {Outlet, useNavigate} from "react-router-dom";
-import {authApi} from "../api/authApi.ts";
-import ScheduleTab from "../components/ScheduleTab.tsx";
+import React, { FC } from 'react';
+import { AppBar, Box, Button, Toolbar, Typography, Chip } from '@mui/material';
+import { useNavigate } from 'react-router-dom';
+import { authApi } from '../api/authApi';
+import ScheduleTab from '../components/ScheduleTab';
 
 interface LayoutProps {
     role: 'STUDENT' | 'TEACHER';
@@ -19,23 +13,32 @@ const Layout: FC<LayoutProps> = ({ role }) => {
 
     const onLogout = () => {
         authApi.logout();
-        navigate("/login")
-    }
+        navigate('/login');
+    };
 
     return (
-        <>
-            <Box sx={{ flexGrow: 1 }}>
-                <AppBar position="static">
-                    <Toolbar>
-                        <Typography variant="h6" component="div" sx={{ flexGrow: 1 }}>
-                            Учет посещаемости
-                        </Typography>
-                        <Button onClick={onLogout} color="inherit">Выйти</Button>
-                    </Toolbar>
-                </AppBar>
-            </Box>
-            <ScheduleTab userRole={role}/>
-        </>
+        <Box sx={{ minHeight: '100vh', bgcolor: 'background.default' }}>
+            <AppBar position="sticky" elevation={1}>
+                <Toolbar>
+                    <Typography variant="h6" sx={{ fontWeight: 600, mr: 2 }}>
+                        QR Attend
+                    </Typography>
+
+                    <Chip
+                        label={role === 'TEACHER' ? 'Преподаватель' : 'Студент'}
+                        color="secondary"
+                        size="small"
+                        sx={{ mr: 'auto', fontWeight: 500 }}
+                    />
+
+                    <Button onClick={onLogout} color="inherit" variant="outlined" size="small">
+                        Выйти
+                    </Button>
+                </Toolbar>
+            </AppBar>
+
+            <ScheduleTab userRole={role} />
+        </Box>
     );
 };
 

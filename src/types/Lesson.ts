@@ -2,9 +2,10 @@ export type LessonStatus = 'IN_WAITING' | 'IN_PROGRESS' | 'DONE';
 
 export interface LessonResponse {
     id: number;
-    teacherLastName: string;
-    teacherFirstName: string;
-    teacherPatronymic: string;
+    teacherFullName?: string;
+    teacherLastName?: string;
+    teacherFirstName?: string;
+    teacherPatronymic?: string;
     subjectName: string;
     date: string;
     timeFrom: string;
@@ -15,8 +16,8 @@ export interface LessonResponse {
 }
 
 export interface FetchLessonsParams {
-    page: number;
-    size: number;
+    page?: number;
+    size?: number;
     date?: string;
 }
 

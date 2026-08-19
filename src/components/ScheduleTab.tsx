@@ -13,7 +13,6 @@ import {
     Alert,
     InputAdornment,
     Chip,
-    Fade,
     Dialog,
     DialogTitle,
     DialogContent,
@@ -23,11 +22,9 @@ import {
     Tab,
     Tabs,
     TextField,
+    LinearProgress,
 } from '@mui/material';
-import {
-    DatePicker,
-    LocalizationProvider,
-} from '@mui/x-date-pickers';
+import { DatePicker, LocalizationProvider } from '@mui/x-date-pickers';
 import { AdapterDayjs } from '@mui/x-date-pickers/AdapterDayjs';
 import dayjs, { Dayjs } from 'dayjs';
 import 'dayjs/locale/ru';
@@ -52,25 +49,28 @@ import type {
 } from '../types/Lesson';
 import QRCode from 'qrcode';
 import QRScanner from './QRScanner';
-import StudentAttendanceTab from "./StudentAttendanceTab";
-import TeacherAttendanceTab from "./TeacherAttendanceTab";
+import StudentAttendanceTab from './StudentAttendanceTab';
+import TeacherAttendanceTab from './TeacherAttendanceTab';
 
 interface ScheduleComponentProps {
     pageSize?: number;
     onLessonClick?: (lesson: LessonResponse) => void;
-    userRole?: 'STUDENT' | 'TEACHER';
+    userRole?: 'STUDENT' | 'TEACHER' | string;
 }
 
 interface GroupedLessons {
     [date: string]: LessonResponse[];
 }
 
+const QR_TTL_SECONDS = 5;
+
 const ScheduleTab: React.FC<ScheduleComponentProps> = ({
                                                            pageSize = 10,
                                                            onLessonClick,
                                                            userRole = 'STUDENT',
                                                        }) => {
-    // ========== ОСНОВНЫЕ СОСТОЯНИЯ ==========
+    const isTeacher = userRole.toUpperCase().includes('TEACHER');
+
     const [lessons, setLessons] = useState<LessonResponse[]>([]);
     const [loading, setLoading] = useState<boolean>(false);
     const [error, setError] = useState<string | null>(null);
@@ -80,30 +80,37 @@ const ScheduleTab: React.FC<ScheduleComponentProps> = ({
     const [totalElements, setTotalElements] = useState<number>(0);
     const [activeTab, setActiveTab] = useState<number>(0);
 
-    // ========== QR ДИАЛОГ (ДЛЯ ПРЕПОДАВАТЕЛЯ) ==========
     const [qrDialogOpen, setQrDialogOpen] = useState<boolean>(false);
     const [selectedLesson, setSelectedLesson] = useState<LessonResponse | null>(null);
     const [qrTokenData, setQrTokenData] = useState<QRCodeResponse | null>(null);
-    const [qrTimeLeft, setQrTimeLeft] = useState<number>(5);
+    const [qrTimeLeft, setQrTimeLeft] = useState<number>(QR_TTL_SECONDS);
     const [qrImageUrl, setQrImageUrl] = useState<string>('');
     const [isCompleting, setIsCompleting] = useState<boolean>(false);
 
-    // ========== СКАНЕР (ДЛЯ СТУДЕНТА) ==========
     const [scannerDialogOpen, setScannerDialogOpen] = useState<boolean>(false);
     const [scannerLesson, setScannerLesson] = useState<LessonResponse | null>(null);
     const [isScanning, setIsScanning] = useState<boolean>(false);
     const [scanError, setScanError] = useState<string | null>(null);
     const [scannedToken, setScannedToken] = useState<string>('');
 
-    // ========== УВЕДОМЛЕНИЯ ==========
     const [snackbarOpen, setSnackbarOpen] = useState<boolean>(false);
     const [snackbarMessage, setSnackbarMessage] = useState<string>('');
 
-    // ========== REFS ==========
     const qrIntervalRef = useRef<NodeJS.Timeout | null>(null);
-    const timerIntervalRef = useRef<NodeJS.Timeout | null>(null);
+    const activeLessonIdRef = useRef<number | null>(null);
 
-    // ========== ЗАГРУЗКА РАСПИСАНИЯ ==========
+    const stopQrRotation = useCallback(() => {
+        if (qrIntervalRef.current) {
+            clearInterval(qrIntervalRef.current);
+            qrIntervalRef.current = null;
+        }
+        activeLessonIdRef.current = null;
+    }, []);
+
+    useEffect(() => {
+        return () => stopQrRotation();
+    }, [stopQrRotation]);
+
     const loadLessons = useCallback(async () => {
         try {
             setLoading(true);
@@ -119,11 +126,11 @@ const ScheduleTab: React.FC<ScheduleComponentProps> = ({
             }
 
             const response = await lessonsApi.getLessonsByFilter(params);
-            setLessons(response.content);
-            setTotalPages(response.totalPages);
-            setTotalElements(response.totalElements);
+            setLessons(response.content || []);
+            setTotalPages(response.totalPages || 1);
+            setTotalElements(response.totalElements || 0);
         } catch (err) {
-            console.error('Error loading lessons:', err);
+            console.error('Ошибка загрузки расписания:', err);
             setError('Ошибка при загрузке расписания');
         } finally {
             setLoading(false);
@@ -134,90 +141,57 @@ const ScheduleTab: React.FC<ScheduleComponentProps> = ({
         loadLessons();
     }, [loadLessons]);
 
-    // ========== ОЧИСТКА ИНТЕРВАЛОВ ==========
-    useEffect(() => {
-        return () => {
-            if (qrIntervalRef.current) {
-                clearInterval(qrIntervalRef.current);
-                qrIntervalRef.current = null;
-            }
-            if (timerIntervalRef.current) {
-                clearInterval(timerIntervalRef.current);
-                timerIntervalRef.current = null;
-            }
-        };
-    }, []);
-
-    // ========== ГЕНЕРАЦИЯ QR ==========
-    const generateQRCode = useCallback(async (text: string) => {
+    const generateQRCode = useCallback(async (token: string, lessonId: number) => {
         try {
-            const url = await QRCode.toDataURL(text, {
-                width: 300,
-                margin: 4,
-                color: { dark: '#000000', light: '#ffffff' },
-                errorCorrectionLevel: 'H',
+            const qrPayload = JSON.stringify({ token, lessonId });
+            const url = await QRCode.toDataURL(qrPayload, {
+                width: 260,
+                margin: 2,
+                color: { dark: '#111827', light: '#ffffff' },
+                errorCorrectionLevel: 'M',
             });
             setQrImageUrl(url);
-        } catch (error) {
-            console.error('Error generating QR code:', error);
+        } catch (err) {
+            console.error('Ошибка генерации QR:', err);
         }
     }, []);
 
-    useEffect(() => {
-        if (qrTokenData) {
-            const qrText = JSON.stringify({
-                token: qrTokenData.token,
-                lessonId: qrTokenData.lessonId,
-            });
-            generateQRCode(qrText);
+    const fetchNextToken = useCallback(async (lessonId: number) => {
+        try {
+            let response: QRCodeResponse;
+            try {
+                response = await lessonsApi.getNextQrToken(lessonId);
+            } catch {
+                // Fallback, если на бэкенде старт и обновление идут через один endpoint
+                response = await lessonsApi.startLesson(lessonId);
+            }
+            setQrTokenData(response);
+            setQrTimeLeft(response.ttl || QR_TTL_SECONDS);
+            generateQRCode(response.token, lessonId);
+        } catch (err) {
+            console.error('Ошибка обновления QR-токена:', err);
         }
-    }, [qrTokenData, generateQRCode]);
+    }, [generateQRCode]);
 
-    // ========== ОБРАБОТЧИКИ ==========
-    const handleDateChange = (newDate: Dayjs | null) => {
-        setSelectedDate(newDate);
-        setCurrentPage(1);
-    };
+    const startQrRotation = useCallback((lessonId: number) => {
+        stopQrRotation();
+        activeLessonIdRef.current = lessonId;
+        setQrTimeLeft(QR_TTL_SECONDS);
 
-    const handleClearDate = () => {
-        setSelectedDate(null);
-        setCurrentPage(1);
-    };
+        let countdown = QR_TTL_SECONDS;
 
-    const handlePageChange = (_: React.ChangeEvent<unknown>, page: number) => {
-        setCurrentPage(page);
-        window.scrollTo({ top: 0, behavior: 'smooth' });
-    };
+        qrIntervalRef.current = setInterval(() => {
+            countdown -= 1;
+            if (countdown <= 0) {
+                countdown = QR_TTL_SECONDS;
+                if (activeLessonIdRef.current) {
+                    fetchNextToken(activeLessonIdRef.current);
+                }
+            }
+            setQrTimeLeft(countdown);
+        }, 1000);
+    }, [stopQrRotation, fetchNextToken]);
 
-    const handleRefresh = () => {
-        loadLessons();
-    };
-
-    // ========== ПРОВЕРКИ ДЛЯ ПРЕПОДАВАТЕЛЯ ==========
-    const canStartLesson = (lesson: LessonResponse): boolean => {
-        if (userRole !== 'TEACHER') return false;
-        if (lesson.status !== 'IN_WAITING') return false;
-
-        const today = dayjs().format('YYYY-MM-DD');
-        if (lesson.date !== today) return false;
-
-        const now = dayjs();
-        const lessonStart = dayjs(`${lesson.date}T${lesson.timeFrom}`);
-        const diffMinutes = now.diff(lessonStart, 'minutes');
-
-        return diffMinutes >= -15 && diffMinutes <= 15;
-    };
-
-    // ========== ПРОВЕРКИ ДЛЯ СТУДЕНТА ==========
-    const canScanLesson = (lesson: LessonResponse): boolean => {
-        if (userRole !== 'STUDENT') return false;
-        if (lesson.status !== 'IN_PROGRESS') return false;
-        if (lesson.isMarked) return false;
-        return true;
-    };
-
-    // ========== НАЧАТЬ ЗАНЯТИЕ (ПРЕПОДАВАТЕЛЬ) ==========
-    // В handleStartLesson:
     const handleStartLesson = async (lesson: LessonResponse) => {
         setSelectedLesson(lesson);
         setQrDialogOpen(true);
@@ -225,82 +199,46 @@ const ScheduleTab: React.FC<ScheduleComponentProps> = ({
         try {
             const response = await lessonsApi.startLesson(lesson.id);
             setQrTokenData(response);
-            setQrTimeLeft(response.ttl || 5);
+            generateQRCode(response.token, lesson.id);
 
-            setLessons(prev => prev.map(l =>
-                l.id === lesson.id ? { ...l, status: 'IN_PROGRESS' } : l
-            ));
+            setLessons((prev) =>
+                prev.map((l) => (l.id === lesson.id ? { ...l, status: 'IN_PROGRESS' } : l))
+            );
 
-            // ✅ ОДИН ИНТЕРВАЛ - обновляет и таймер и QR
-            if (qrIntervalRef.current) clearInterval(qrIntervalRef.current);
-            const mainInterval = setInterval(async () => {
-                // Обновляем таймер
-                setQrTimeLeft((prev) => {
-                    if (prev <= 1) {
-                        // Когда таймер доходит до 0 - обновляем QR
-                        refreshQR(lesson.id);
-                        return 5; // Сбрасываем на 5 секунд
-                    }
-                    return prev - 1;
-                });
-            }, 1000);
-            qrIntervalRef.current = mainInterval;
-
-            // ✅ Функция обновления QR
-            const refreshQR = async (id: number) => {
-                try {
-                    const newResponse = await lessonsApi.startLesson(id);
-                    if (newResponse.token !== qrTokenData?.token) {
-                        setQrTokenData(newResponse);
-                    }
-                } catch (error) {
-                    console.error('Error refreshing QR:', error);
-                }
-            };
-
-            setSnackbarMessage('Занятие начато! QR код готов');
+            startQrRotation(lesson.id);
+            setSnackbarMessage('Занятие начато!');
             setSnackbarOpen(true);
-        } catch (error) {
-            console.error('Error starting lesson:', error);
+        } catch (err) {
+            console.error('Ошибка начала занятия:', err);
             setSnackbarMessage('Ошибка при начале занятия');
             setSnackbarOpen(true);
             handleCloseQRDialog();
         }
     };
 
-// В handleCloseQRDialog
     const handleCloseQRDialog = () => {
+        stopQrRotation();
         setQrDialogOpen(false);
         setSelectedLesson(null);
         setQrTokenData(null);
         setQrImageUrl('');
-        setQrTimeLeft(5);
-
-        if (qrIntervalRef.current) {
-            clearInterval(qrIntervalRef.current);
-            qrIntervalRef.current = null;
-        }
-        if (timerIntervalRef.current) {
-            clearInterval(timerIntervalRef.current);
-            timerIntervalRef.current = null;
-        }
+        setQrTimeLeft(QR_TTL_SECONDS);
     };
 
-    // ========== ЗАВЕРШИТЬ ЗАНЯТИЕ (ПРЕПОДАВАТЕЛЬ) ==========
     const handleCompleteLesson = async () => {
         if (!selectedLesson) return;
 
         setIsCompleting(true);
         try {
             await lessonsApi.completeLesson(selectedLesson.id);
-            setLessons(prev => prev.map(l =>
-                l.id === selectedLesson.id ? { ...l, status: 'DONE' } : l
-            ));
+            setLessons((prev) =>
+                prev.map((l) => (l.id === selectedLesson.id ? { ...l, status: 'DONE' } : l))
+            );
             handleCloseQRDialog();
-            setSnackbarMessage('Занятие успешно завершено');
+            setSnackbarMessage('Занятие завершено');
             setSnackbarOpen(true);
-        } catch (error) {
-            console.error('Error completing lesson:', error);
+        } catch (err) {
+            console.error('Ошибка завершения занятия:', err);
             setSnackbarMessage('Ошибка при завершении занятия');
             setSnackbarOpen(true);
         } finally {
@@ -308,33 +246,63 @@ const ScheduleTab: React.FC<ScheduleComponentProps> = ({
         }
     };
 
-    // ========== ЗАКРЫТЬ QR ДИАЛОГ ==========
-
-    // ========== СКАНЕР QR (ДЛЯ СТУДЕНТА) ==========
-    const handleScan = (data: string) => {
-        console.log('📸 QR DATA RAW:', data);
-
-        if (!data) {
-            console.log('❌ Пустые данные');
-            setScanError('Пустой QR код');
+    const handleScanQR = async (tokenToSubmit: string) => {
+        const cleanToken = tokenToSubmit.trim();
+        if (!scannerLesson) {
+            setScanError('Ошибка: занятие не выбрано');
             return;
         }
 
-        try {
-            // Пробуем парсить как JSON
-            const qrData = JSON.parse(data);
-            console.log('📸 PARSED:', qrData);
-
-            if (qrData.token) {
-                handleScanQR(qrData.token);
-            } else {
-                setScanError('Неверный формат QR кода');
-            }
-        } catch (e) {
-            // Если не JSON - значит просто токен
-            console.log('📸 Токен (не JSON):', data);
-            handleScanQR(data);
+        if (!cleanToken) {
+            setScanError('Введите или отсканируйте валидный токен');
+            return;
         }
+
+        setIsScanning(true);
+        setScanError(null);
+
+        try {
+            await lessonsApi.scanQR({
+                token: cleanToken,
+                lessonId: scannerLesson.id,
+            });
+
+            setLessons((prev) =>
+                prev.map((l) => (l.id === scannerLesson.id ? { ...l, isMarked: true } : l))
+            );
+
+            setSnackbarMessage('Вы успешно отметились!');
+            setSnackbarOpen(true);
+            handleCloseScanner();
+            loadLessons();
+        } catch (err: any) {
+            const status = err?.response?.status;
+            const message = err?.response?.data?.message;
+
+            if (status === 400) {
+                setScanError(message || 'QR-код истек или недействителен');
+            } else if (status === 404) {
+                setScanError('Занятие не найдено или уже завершено');
+            } else if (status === 403) {
+                setScanError('Вы не состоите в группе для этого занятия');
+            } else {
+                setScanError('Ошибка при отметке посещаемости');
+            }
+        } finally {
+            setIsScanning(false);
+        }
+    };
+
+    const handleScan = (rawText: string) => {
+        if (!rawText) return;
+        try {
+            const parsed = JSON.parse(rawText);
+            if (parsed.token) {
+                handleScanQR(parsed.token);
+                return;
+            }
+        } catch {}
+        handleScanQR(rawText);
     };
 
     const handleOpenScanner = (lesson: LessonResponse) => {
@@ -352,127 +320,63 @@ const ScheduleTab: React.FC<ScheduleComponentProps> = ({
         setIsScanning(false);
     };
 
-    const handleScanQR = async (token: string) => {
-        console.log('📸 Обработка токена:', token);
-
-        if (!scannerLesson) {
-            console.log('❌ Нет занятия');
-            setScanError('Ошибка: занятие не выбрано');
-            return;
-        }
-
-        if (!token) {
-            console.log('❌ Пустой токен');
-            setScanError('Недействительный QR код');
-            return;
-        }
-
-        setIsScanning(true);
-        setScanError(null);
-
-        try {
-            console.log('📤 Отправка на сервер:', { token, lessonId: scannerLesson.id });
-
-            await lessonsApi.scanQR({
-                token: token,
-                lessonId: scannerLesson.id,
-            });
-
-            console.log('✅ Отметка успешна');
-
-            setLessons(prev => prev.map(l =>
-                l.id === scannerLesson.id ? { ...l, isMarked: true } : l
-            ));
-
-            setSnackbarMessage('Вы успешно отметились на занятии!');
-            setSnackbarOpen(true);
-
-            // Закрываем сканер
-            handleCloseScanner();
-            loadLessons();
-
-        } catch (error: any) {
-            console.error('❌ Ошибка сканирования:', error);
-
-            if (error?.response?.status === 400) {
-                setScanError(error.response.data?.message || 'Недействительный QR код');
-            } else if (error?.response?.status === 404) {
-                setScanError('Сессия истекла. Занятие уже завершено');
-            } else if (error?.response?.status === 403) {
-                setScanError('Вы не записаны на это занятие');
-            } else {
-                setScanError('Ошибка при сканировании QR кода');
-            }
-        } finally {
-            setIsScanning(false);
-        }
+    const canStartLesson = (lesson: LessonResponse): boolean => {
+        if (!isTeacher || lesson.status !== 'IN_WAITING') return false;
+        const today = dayjs().format('YYYY-MM-DD');
+        return lesson.date === today;
     };
 
-    // ========== ФОРМАТИРОВАНИЕ ==========
-    const formatTime = (time: string): string => time.substring(0, 5);
-    const formatTimer = (seconds: number): string => {
-        const mins = Math.floor(seconds / 60);
-        const secs = seconds % 60;
-        return `${String(mins).padStart(2, '0')}:${String(secs).padStart(2, '0')}`;
-    };
-    const formatDate = (date: string): string => {
-        return dayjs(date).locale('ru').format('DD MMMM YYYY, dddd');
-    };
-    const isToday = (date: string): boolean => {
-        return dayjs(date).isSame(dayjs(), 'day');
+    const canScanLesson = (lesson: LessonResponse): boolean => {
+        return !isTeacher && lesson.status === 'IN_PROGRESS' && !lesson.isMarked;
     };
 
-    // ========== СТАТУСЫ ==========
-    const getStatusColor = (status: LessonStatus): string => {
+    const formatTime = (time: string): string => (time ? time.substring(0, 5) : '');
+    const formatDate = (date: string): string => dayjs(date).locale('ru').format('DD MMMM YYYY, dddd');
+    const isToday = (date: string): boolean => dayjs(date).isSame(dayjs(), 'day');
+
+    const getStatusChip = (status: LessonStatus) => {
         switch (status) {
-            case 'IN_PROGRESS': return 'warning';
-            case 'DONE': return 'success';
-            default: return 'default';
-        }
-    };
-    const getStatusLabel = (status: LessonStatus): string => {
-        switch (status) {
-            case 'IN_PROGRESS': return 'Идет';
-            case 'DONE': return 'Завершено';
-            default: return 'Ожидание';
+            case 'IN_PROGRESS':
+                return <Chip label="Идет пара" color="warning" size="small" icon={<AccessTime />} />;
+            case 'DONE':
+                return <Chip label="Завершено" color="success" size="small" icon={<CheckCircle />} />;
+            default:
+                return <Chip label="Ожидание" color="default" size="small" />;
         }
     };
 
-    // ========== ГРУППИРОВКА ==========
-    const groupLessonsByDate = (lessons: LessonResponse[]): GroupedLessons => {
-        const groups: GroupedLessons = {};
-        lessons.forEach((lesson) => {
-            const date = lesson.date;
-            if (!groups[date]) {
-                groups[date] = [];
-            }
-            groups[date].push(lesson);
-        });
-        return groups;
+    const groupLessonsByDate = (items: LessonResponse[]): GroupedLessons => {
+        return items.reduce((acc, lesson) => {
+            acc[lesson.date] = acc[lesson.date] || [];
+            acc[lesson.date].push(lesson);
+            return acc;
+        }, {} as GroupedLessons);
     };
 
     const groupedLessons = groupLessonsByDate(lessons);
 
-    // ========== РЕНДЕР КОНТЕНТА ==========
     const renderScheduleContent = () => (
         <>
-            <Paper elevation={2} sx={{ p: 3, mb: 4, borderRadius: 2 }}>
+            <Paper elevation={1} sx={{ p: 2.5, mb: 3, borderRadius: 2 }}>
                 <Grid container spacing={2} alignItems="center">
-                    <Grid item xs={12} md={5}>
+                    <Grid size={{ xs: 12, sm: 6, md: 4 }}>
                         <DatePicker
                             label="Фильтр по дате"
                             value={selectedDate}
-                            onChange={handleDateChange}
+                            onChange={(val) => {
+                                setSelectedDate(val);
+                                setCurrentPage(1);
+                            }}
                             format="DD.MM.YYYY"
                             slotProps={{
                                 textField: {
                                     fullWidth: true,
-                                    variant: 'outlined',
+                                    size: 'small',
                                     slotProps: {
                                         input: {
                                             startAdornment: (
                                                 <InputAdornment position="start">
-                                                    <CalendarToday />
+                                                    <CalendarToday fontSize="small" />
                                                 </InputAdornment>
                                             ),
                                         },
@@ -481,14 +385,27 @@ const ScheduleTab: React.FC<ScheduleComponentProps> = ({
                             }}
                         />
                     </Grid>
-                    <Grid item xs={12} md={7}>
-                        <Stack direction="row" spacing={2} flexWrap="wrap" useFlexGap>
+                    <Grid size={{ xs: 12, sm: 6, md: 8 }}>
+                        <Stack direction="row" spacing={1.5}>
                             {selectedDate && (
-                                <Button variant="outlined" onClick={handleClearDate} startIcon={<Clear />}>
-                                    Очистить фильтр
+                                <Button
+                                    variant="outlined"
+                                    size="medium"
+                                    onClick={() => {
+                                        setSelectedDate(null);
+                                        setCurrentPage(1);
+                                    }}
+                                    startIcon={<Clear />}
+                                >
+                                    Сбросить
                                 </Button>
                             )}
-                            <Button variant="contained" onClick={handleRefresh} startIcon={<Refresh />}>
+                            <Button
+                                variant="contained"
+                                size="medium"
+                                onClick={loadLessons}
+                                startIcon={<Refresh />}
+                            >
                                 Обновить
                             </Button>
                         </Stack>
@@ -496,400 +413,278 @@ const ScheduleTab: React.FC<ScheduleComponentProps> = ({
                 </Grid>
             </Paper>
 
-            {!loading && !error && lessons.length > 0 && (
-                <Fade in={!loading}>
-                    <Box sx={{ mb: 2, display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                        <Typography variant="body2" color="text.secondary">
-                            Найдено: <strong>{totalElements}</strong> занятий
-                        </Typography>
-                        <Typography variant="body2" color="text.secondary">
-                            Страница {currentPage} из {totalPages}
-                        </Typography>
-                    </Box>
-                </Fade>
-            )}
-
-            <Box sx={{ position: 'relative', minHeight: 200 }}>
+            <Box sx={{ minHeight: 250 }}>
                 {loading && (
-                    <Box sx={{ display: 'flex', justifyContent: 'center', alignItems: 'center', minHeight: 300 }}>
-                        <CircularProgress size={60} thickness={4} />
+                    <Box sx={{ display: 'flex', justifyContent: 'center', py: 8 }}>
+                        <CircularProgress size={48} />
                     </Box>
                 )}
 
-                {error && (
-                    <Fade in={!!error}>
-                        <Alert severity="error" sx={{ mb: 2 }} action={
-                            <Button color="inherit" size="small" onClick={handleRefresh}>Повторить</Button>
-                        }>
-                            {error}
-                        </Alert>
-                    </Fade>
+                {error && !loading && (
+                    <Alert
+                        severity="error"
+                        sx={{ mb: 2 }}
+                        action={
+                            <Button color="inherit" onClick={loadLessons}>
+                                Повторить
+                            </Button>
+                        }
+                    >
+                        {error}
+                    </Alert>
                 )}
 
                 {!loading && !error && lessons.length === 0 && (
-                    <Fade in={!loading}>
-                        <Alert severity="info" icon={<Schedule />} sx={{ mb: 2 }}>
-                            {selectedDate
-                                ? `Нет занятий на ${selectedDate.format('DD.MM.YYYY')}`
-                                : 'Нет занятий на выбранный период'}
-                        </Alert>
-                    </Fade>
+                    <Alert severity="info" icon={<Schedule />}>
+                        {selectedDate
+                            ? `На ${selectedDate.format('DD.MM.YYYY')} занятий не запланировано`
+                            : 'Расписание пусто'}
+                    </Alert>
                 )}
 
-                {!loading && !error && Object.keys(groupedLessons).length > 0 && (
-                    <Fade in={!loading}>
-                        <Stack spacing={3}>
-                            {Object.entries(groupedLessons).map(([date, dayLessons]) => (
-                                <Card
-                                    key={date}
-                                    elevation={3}
-                                    sx={{
-                                        borderRadius: 2,
-                                        overflow: 'hidden',
-                                        border: isToday(date) ? '2px solid' : 'none',
-                                        borderColor: 'primary.main',
-                                        transition: 'transform 0.2s, box-shadow 0.2s',
-                                        '&:hover': {
-                                            transform: 'translateY(-4px)',
-                                            boxShadow: 6,
-                                        },
-                                    }}
-                                >
-                                    <Box
-                                        sx={{
-                                            p: 2,
-                                            backgroundColor: isToday(date) ? 'primary.main' : 'grey.100',
-                                            color: isToday(date) ? 'white' : 'text.primary',
-                                            borderBottom: '1px solid',
-                                            borderColor: 'divider',
-                                        }}
-                                    >
-                                        <Stack direction="row" justifyContent="space-between" alignItems="center">
-                                            <Typography variant="h6" fontWeight={600} sx={{ color: isToday(date) ? 'white' : 'inherit' }}>
-                                                {formatDate(date)}
-                                            </Typography>
-                                            {isToday(date) && (
-                                                <Chip
-                                                    label="Сегодня"
-                                                    size="small"
-                                                    sx={{
-                                                        backgroundColor: 'rgba(255,255,255,0.2)',
-                                                        color: 'white',
-                                                        fontWeight: 600,
-                                                    }}
-                                                />
-                                            )}
-                                        </Stack>
-                                        <Typography
-                                            variant="body2"
+                {!loading &&
+                    !error &&
+                    Object.keys(groupedLessons).map((date) => (
+                        <Card key={date} elevation={2} sx={{ mb: 3, borderRadius: 2 }}>
+                            <Box
+                                sx={{
+                                    p: 1.5,
+                                    px: 2.5,
+                                    bgcolor: isToday(date) ? 'primary.light' : 'grey.100',
+                                    color: isToday(date) ? 'primary.contrastText' : 'inherit',
+                                }}
+                            >
+                                <Stack direction="row" justifyContent="space-between" alignItems="center">
+                                    <Typography variant="subtitle1" fontWeight={700}>
+                                        {formatDate(date)}
+                                    </Typography>
+                                    {isToday(date) && <Chip label="Сегодня" size="small" color="primary" />}
+                                </Stack>
+                            </Box>
+
+                            <CardContent sx={{ p: 2 }}>
+                                <Stack spacing={2}>
+                                    {groupedLessons[date].map((lesson) => (
+                                        <Paper
+                                            key={lesson.id}
+                                            variant="outlined"
+                                            onClick={() => onLessonClick?.(lesson)}
                                             sx={{
-                                                color: isToday(date) ? 'rgba(255,255,255,0.8)' : 'text.secondary',
-                                                mt: 0.5,
+                                                p: 2,
+                                                borderRadius: 2,
+                                                cursor: onLessonClick ? 'pointer' : 'default',
+                                                bgcolor:
+                                                    lesson.status === 'IN_PROGRESS'
+                                                        ? 'warning.50'
+                                                        : 'background.paper',
                                             }}
                                         >
-                                            {dayLessons.length} {dayLessons.length === 1 ? 'занятие' : dayLessons.length < 5 ? 'занятия' : 'занятий'}
-                                        </Typography>
-                                    </Box>
+                                            <Grid container spacing={2} alignItems="center">
+                                                <Grid size={{ xs: 12, sm: 3 }}>
+                                                    <Typography variant="body2" color="text.secondary">
+                                                        Время
+                                                    </Typography>
+                                                    <Typography variant="subtitle1" fontWeight={600}>
+                                                        {formatTime(lesson.timeFrom)} — {formatTime(lesson.timeTo)}
+                                                    </Typography>
+                                                </Grid>
 
-                                    <CardContent sx={{ p: 2 }}>
-                                        <Stack spacing={2}>
-                                            {dayLessons.map((lesson) => {
-                                                const canStart = canStartLesson(lesson);
-                                                const canScan = canScanLesson(lesson);
-                                                const isDone = lesson.status === 'DONE';
-                                                const isInProgress = lesson.status === 'IN_PROGRESS';
-                                                const isMarked = lesson.isMarked;
+                                                <Grid size={{ xs: 12, sm: 4 }}>
+                                                    <Typography variant="body2" color="text.secondary">
+                                                        Дисциплина
+                                                    </Typography>
+                                                    <Typography variant="subtitle1" fontWeight={600} color="primary">
+                                                        {lesson.subjectName}
+                                                    </Typography>
+                                                    <Typography variant="caption" color="text.secondary">
+                                                        {lesson.teacherFullName ||
+                                                            `${lesson.teacherLastName || ''} ${lesson.teacherFirstName || ''}`}
+                                                    </Typography>
+                                                </Grid>
 
-                                                return (
-                                                    <Box
-                                                        key={lesson.id}
-                                                        onClick={() => onLessonClick?.(lesson)}
-                                                        sx={{
-                                                            p: 2,
-                                                            borderRadius: 1,
-                                                            backgroundColor: isDone ? '#c8e6c9' : isInProgress ? '#fff3e0' : '#f5f5f5',
-                                                            cursor: onLessonClick ? 'pointer' : 'default',
-                                                            transition: 'all 0.2s',
-                                                            border: '1px solid',
-                                                            borderColor: isDone ? '#4caf50' : isInProgress ? '#ff9800' : 'transparent',
-                                                            '&:hover': {
-                                                                backgroundColor: isDone ? '#c8e6c9' : isInProgress ? '#fff3e0' : '#eeeeee',
-                                                                transform: 'scale(1.01)',
-                                                            },
-                                                        }}
-                                                    >
-                                                        <Grid container spacing={2} alignItems="center">
-                                                            <Grid item xs={12} md={4}>
-                                                                <Typography variant="subtitle2" color="text.secondary" gutterBottom>
-                                                                    Время
-                                                                </Typography>
-                                                                <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
-                                                                    <Typography variant="body1" fontWeight={600}>
-                                                                        {formatTime(lesson.timeFrom)}
-                                                                    </Typography>
-                                                                    <Typography variant="body2" color="text.secondary">
-                                                                        —
-                                                                    </Typography>
-                                                                    <Typography variant="body1" fontWeight={600}>
-                                                                        {formatTime(lesson.timeTo)}
-                                                                    </Typography>
-                                                                </Box>
-                                                            </Grid>
+                                                <Grid size={{ xs: 6, sm: 2 }}>
+                                                    <Typography variant="body2" color="text.secondary">
+                                                        Аудитория
+                                                    </Typography>
+                                                    <Typography variant="subtitle2" fontWeight={600}>
+                                                        {lesson.audience}
+                                                    </Typography>
+                                                </Grid>
 
-                                                            <Grid item xs={12} md={4}>
-                                                                <Typography variant="subtitle2" color="text.secondary" gutterBottom>
-                                                                    Предмет
-                                                                </Typography>
-                                                                <Typography variant="body1" fontWeight={700} color="primary.main">
-                                                                    {lesson.subjectName}
-                                                                </Typography>
-                                                                <Typography variant="body2" color="text.secondary">
-                                                                    {lesson.teacherLastName} {lesson.teacherFirstName?.charAt(0)}.
-                                                                    {lesson.teacherPatronymic?.charAt(0)}.
-                                                                </Typography>
-                                                            </Grid>
+                                                <Grid size={{ xs: 6, sm: 3 }} sx={{ textAlign: 'right' }}>
+                                                    <Stack spacing={1} alignItems="flex-end">
+                                                        {getStatusChip(lesson.status)}
 
-                                                            <Grid item xs={12} md={4}>
-                                                                <Stack spacing={1} alignItems="flex-end">
-                                                                    <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, width: '100%', justifyContent: 'flex-end' }}>
-                                                                        <Typography variant="subtitle2" color="text.secondary">
-                                                                            Аудитория:
-                                                                        </Typography>
-                                                                        <Typography variant="body1" fontWeight={500}>
-                                                                            {lesson.audience}
-                                                                        </Typography>
-                                                                    </Box>
+                                                        {isTeacher && canStartLesson(lesson) && (
+                                                            <Button
+                                                                variant="contained"
+                                                                size="small"
+                                                                startIcon={<QrCodeScanner />}
+                                                                onClick={(e) => {
+                                                                    e.stopPropagation();
+                                                                    handleStartLesson(lesson);
+                                                                }}
+                                                            >
+                                                                Начать пару
+                                                            </Button>
+                                                        )}
 
-                                                                    <Chip
-                                                                        label={getStatusLabel(lesson.status)}
-                                                                        color={getStatusColor(lesson.status) as any}
-                                                                        size="small"
-                                                                        sx={{ fontWeight: 500 }}
-                                                                    />
+                                                        {!isTeacher && canScanLesson(lesson) && (
+                                                            <Button
+                                                                variant="contained"
+                                                                color="success"
+                                                                size="small"
+                                                                startIcon={<CameraAlt />}
+                                                                onClick={(e) => {
+                                                                    e.stopPropagation();
+                                                                    handleOpenScanner(lesson);
+                                                                }}
+                                                            >
+                                                                Отметиться
+                                                            </Button>
+                                                        )}
 
-                                                                    {userRole === 'TEACHER' && (
-                                                                        <>
-                                                                            {isDone ? (
-                                                                                <Chip icon={<CheckCircle />} label="Завершено" color="success" size="small" />
-                                                                            ) : canStart ? (
-                                                                                <Button
-                                                                                    variant="contained"
-                                                                                    color="primary"
-                                                                                    size="small"
-                                                                                    startIcon={<QrCodeScanner />}
-                                                                                    onClick={(e) => {
-                                                                                        e.stopPropagation();
-                                                                                        handleStartLesson(lesson);
-                                                                                    }}
-                                                                                    sx={{ minWidth: '120px' }}
-                                                                                >
-                                                                                    Начать
-                                                                                </Button>
-                                                                            ) : isInProgress ? (
-                                                                                <Chip icon={<AccessTime />} label="Идет занятие" color="warning" size="small" />
-                                                                            ) : null}
-                                                                        </>
-                                                                    )}
-
-                                                                    {userRole === 'STUDENT' && (
-                                                                        <>
-                                                                            {isDone ? (
-                                                                                <Chip icon={<CheckCircle />} label="Завершено" color="success" size="small" />
-                                                                            ) : isMarked ? (
-                                                                                <Chip icon={<CheckCircle />} label="Отмечено" color="success" size="small" />
-                                                                            ) : canScan ? (
-                                                                                <Button
-                                                                                    variant="contained"
-                                                                                    color="primary"
-                                                                                    size="small"
-                                                                                    startIcon={<CameraAlt />}
-                                                                                    onClick={(e) => {
-                                                                                        e.stopPropagation();
-                                                                                        handleOpenScanner(lesson);
-                                                                                    }}
-                                                                                    sx={{ minWidth: '120px' }}
-                                                                                >
-                                                                                    Сканировать
-                                                                                </Button>
-                                                                            ) : lesson.status === 'IN_WAITING' ? (
-                                                                                <Chip icon={<AccessTime />} label="Ожидание" color="default" size="small" />
-                                                                            ) : null}
-                                                                        </>
-                                                                    )}
-                                                                </Stack>
-                                                            </Grid>
-                                                        </Grid>
-                                                    </Box>
-                                                );
-                                            })}
-                                        </Stack>
-                                    </CardContent>
-                                </Card>
-                            ))}
-                        </Stack>
-                    </Fade>
-                )}
+                                                        {!isTeacher && lesson.isMarked && (
+                                                            <Chip
+                                                                label="Вы отмечены"
+                                                                color="success"
+                                                                size="small"
+                                                                icon={<CheckCircle />}
+                                                            />
+                                                        )}
+                                                    </Stack>
+                                                </Grid>
+                                            </Grid>
+                                        </Paper>
+                                    ))}
+                                </Stack>
+                            </CardContent>
+                        </Card>
+                    ))}
             </Box>
 
-            {!loading && !error && totalPages > 1 && (
-                <Fade in={!loading}>
-                    <Box sx={{ mt: 4, display: 'flex', justifyContent: 'center' }}>
-                        <Pagination
-                            count={totalPages}
-                            page={currentPage}
-                            onChange={handlePageChange}
-                            color="primary"
-                            size="large"
-                            showFirstButton
-                            showLastButton
-                        />
-                    </Box>
-                </Fade>
+            {totalPages > 1 && (
+                <Box sx={{ display: 'flex', justifyContent: 'center', mt: 3 }}>
+                    <Pagination
+                        count={totalPages}
+                        page={currentPage}
+                        onChange={(_, p) => setCurrentPage(p)}
+                        color="primary"
+                    />
+                </Box>
             )}
         </>
     );
 
-    // ========== ОСНОВНОЙ РЕНДЕР ==========
     return (
         <LocalizationProvider dateAdapter={AdapterDayjs} adapterLocale="ru">
-            <Box sx={{ maxWidth: 1200, margin: '0 auto', padding: 3 }}>
-                <Box sx={{ display: 'flex', alignItems: 'center', mb: 3 }}>
-                    <Schedule sx={{ fontSize: 32, color: 'primary.main', mr: 2 }} />
-                    <Typography variant="h4" component="h1" sx={{ fontWeight: 700, color: 'primary.main' }}>
-                        Расписание занятий
-                    </Typography>
-                    {userRole === 'TEACHER' && (
-                        <Chip label="Преподаватель" color="primary" size="small" sx={{ ml: 2 }} />
-                    )}
-                    {userRole === 'STUDENT' && (
-                        <Chip label="Студент" color="secondary" size="small" sx={{ ml: 2 }} />
-                    )}
+            <Box sx={{ maxWidth: 1100, mx: 'auto', p: { xs: 1.5, md: 3 } }}>
+                <Box sx={{ borderBottom: 1, borderColor: 'divider', mb: 3 }}>
+                    <Tabs value={activeTab} onChange={(_, v) => setActiveTab(v)}>
+                        <Tab label="Расписание" icon={<Schedule />} iconPosition="start" />
+                        <Tab
+                            label={isTeacher ? 'Журнал пар' : 'Моя посещаемость'}
+                            icon={<EventNote />}
+                            iconPosition="start"
+                        />
+                    </Tabs>
                 </Box>
 
-                {userRole === 'STUDENT' && (
-                    <Box sx={{ borderBottom: 1, borderColor: 'divider', mb: 3 }}>
-                        <Tabs value={activeTab} onChange={(_, v) => setActiveTab(v)}>
-                            <Tab label="Расписание" icon={<Schedule />} iconPosition="start" />
-                            <Tab label="Посещаемость" icon={<EventNote />} iconPosition="start" />
-                        </Tabs>
-                    </Box>
-                )}
-
-                {userRole === 'TEACHER' && (
-                    <Box sx={{ borderBottom: 1, borderColor: 'divider', mb: 3 }}>
-                        <Tabs value={activeTab} onChange={(_, v) => setActiveTab(v)}>
-                            <Tab label="Расписание" icon={<Schedule />} iconPosition="start" />
-                            <Tab label="Посещаемость студентов" icon={<EventNote />} iconPosition="start" />
-                        </Tabs>
-                    </Box>
-                )}
-
-                {userRole === 'STUDENT' && activeTab === 1 ? (
-                    <StudentAttendanceTab />
-                ) : userRole === 'TEACHER' && activeTab === 1 ? (
-                    <TeacherAttendanceTab />
-                ) : (
-                    renderScheduleContent()
-                )}
+                {activeTab === 0 && renderScheduleContent()}
+                {activeTab === 1 && (isTeacher ? <TeacherAttendanceTab /> : <StudentAttendanceTab />)}
             </Box>
 
-            {/* ===== QR ДИАЛОГ (ДЛЯ ПРЕПОДАВАТЕЛЯ) ===== */}
             <Dialog
                 open={qrDialogOpen}
                 onClose={handleCloseQRDialog}
-                maxWidth="sm"
+                maxWidth="xs"
                 fullWidth
-                disableEscapeKeyDown
-                sx={{ '& .MuiDialog-paper': { borderRadius: 3, padding: 2 } }}
+                sx={{ '& .MuiDialog-paper': { borderRadius: 3, p: 2 } }}
             >
-                <DialogTitle sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                    <Box>
-                        <Typography variant="h6">QR код для посещения</Typography>
-                        <Typography variant="body2" color="text.secondary">
-                            {selectedLesson?.subjectName} - {formatTime(selectedLesson?.timeFrom || '')}
-                        </Typography>
-                    </Box>
-                    <Chip
-                        icon={<AccessTime />}
-                        label={qrTimeLeft > 0 ? `${qrTimeLeft}с` : 'Обновляется...'}
-                        color={qrTimeLeft > 2 ? 'success' : qrTimeLeft > 0 ? 'warning' : 'info'}
-                        sx={{ fontWeight: 600, minWidth: '80px' }}
-                    />
+                <DialogTitle component="div" sx={{ textAlign: 'center', pb: 1 }}>
+                    <Typography variant="h6" fontWeight={700}>
+                        {selectedLesson?.subjectName}
+                    </Typography>
+                    <Typography variant="body2" color="text.secondary">
+                        Динамический QR-код для студентов
+                    </Typography>
                 </DialogTitle>
 
-                <DialogContent>
-                    <Box sx={{ display: 'flex', flexDirection: 'column', alignItems: 'center', py: 3 }}>
-                        {qrImageUrl && (
-                            <>
-                                <Box sx={{ padding: 3, backgroundColor: 'white', borderRadius: 2, boxShadow: 1, mb: 3 }}>
-                                    <img src={qrImageUrl} alt="QR Code" style={{ width: 250, height: 250, display: 'block' }} />
-                                </Box>
-                                <Typography variant="body2" color="text.secondary" align="center">
-                                    QR код обновляется каждые 5 секунд
+                <DialogContent sx={{ textAlign: 'center', py: 2 }}>
+                    {qrImageUrl ? (
+                        <Box sx={{ my: 1 }}>
+                            <Box
+                                component="img"
+                                src={qrImageUrl}
+                                alt="QR Code"
+                                sx={{
+                                    width: 250,
+                                    height: 250,
+                                    borderRadius: 2,
+                                    boxShadow: 2,
+                                    p: 1,
+                                    bgcolor: '#fff',
+                                }}
+                            />
+                            <Box sx={{ width: '80%', mx: 'auto', mt: 2 }}>
+                                <LinearProgress
+                                    variant="determinate"
+                                    value={(qrTimeLeft / QR_TTL_SECONDS) * 100}
+                                    color={qrTimeLeft <= 1 ? 'warning' : 'primary'}
+                                    sx={{ height: 6, borderRadius: 3 }}
+                                />
+                                <Typography variant="caption" color="text.secondary" sx={{ mt: 0.5, display: 'block' }}>
+                                    Обновление через {qrTimeLeft} сек.
                                 </Typography>
-                                {qrTokenData && (
-                                    <Typography variant="caption" color="text.secondary" sx={{ mt: 1 }}>
-                                        Токен: {qrTokenData.token.substring(0, 20)}...
-                                    </Typography>
-                                )}
-                            </>
-                        )}
-                    </Box>
+                            </Box>
+                        </Box>
+                    ) : (
+                        <CircularProgress sx={{ my: 4 }} />
+                    )}
                 </DialogContent>
 
-                <DialogActions sx={{ justifyContent: 'center', paddingBottom: 2 }}>
-                    <Button variant="contained" color="success" onClick={handleCompleteLesson} disabled={isCompleting}>
-                        {isCompleting ? 'Завершение...' : 'Завершить занятие'}
+                <DialogActions sx={{ justifyContent: 'center', pb: 1 }}>
+                    <Button
+                        variant="contained"
+                        color="error"
+                        onClick={handleCompleteLesson}
+                        disabled={isCompleting}
+                    >
+                        {isCompleting ? 'Завершение...' : 'Завершить пару'}
                     </Button>
                 </DialogActions>
             </Dialog>
 
-            {/* ===== СКАНЕР (ДЛЯ СТУДЕНТА) ===== */}
-            <Dialog open={scannerDialogOpen} onClose={handleCloseScanner} maxWidth="sm" fullWidth>
-                <DialogTitle>
-                    <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                        <Typography variant="h6">Сканирование QR кода</Typography>
-                        <IconButton onClick={handleCloseScanner}><Close /></IconButton>
-                    </Box>
-                    <Typography variant="body2" color="text.secondary">
-                        {scannerLesson?.subjectName} - {formatTime(scannerLesson?.timeFrom || '')}
-                    </Typography>
+            {/* Диалог сканера студента */}
+            <Dialog open={scannerDialogOpen} onClose={handleCloseScanner} maxWidth="xs" fullWidth>
+                <DialogTitle component="div" sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                    <Typography variant="h6">Отметка посещаемости</Typography>
+                    <IconButton size="small" onClick={handleCloseScanner}>
+                        <Close />
+                    </IconButton>
                 </DialogTitle>
 
                 <DialogContent>
-                    <Box sx={{ display: 'flex', flexDirection: 'column', alignItems: 'center', py: 3 }}>
-                        <QRScanner
-                            onScan={handleScan}
-                            onError={(error) => {
-                                setScanError(error);
-                            }}
-                        />
+                    <QRScanner onScan={handleScan} onError={(e) => setScanError(e)} />
 
-                        {scanError && (
-                            <Alert severity="error" sx={{ width: '100%', mt: 2 }}>{scanError}</Alert>
-                        )}
+                    {scanError && <Alert severity="error" sx={{ mt: 2 }}>{scanError}</Alert>}
 
-                        <Typography variant="body2" color="text.secondary" align="center" sx={{ mt: 2 }}>
-                            Или введите токен вручную
-                        </Typography>
-
+                    <Box sx={{ mt: 2.5 }}>
                         <TextField
                             fullWidth
-                            label="Токен"
+                            size="small"
+                            label="Или введите токен вручную"
                             value={scannedToken}
                             onChange={(e) => setScannedToken(e.target.value)}
-                            placeholder="Вставьте токен из QR кода"
-                            sx={{ mt: 1, mb: 2 }}
                         />
-
                         <Button
                             variant="contained"
-                            color="primary"
                             fullWidth
+                            sx={{ mt: 1.5 }}
                             onClick={() => handleScanQR(scannedToken)}
-                            disabled={isScanning || !scannedToken}
+                            disabled={isScanning || !scannedToken.trim()}
                         >
-                            {isScanning ? 'Отправка...' : 'Отметиться'}
+                            {isScanning ? 'Проверка...' : 'Отправить'}
                         </Button>
                     </Box>
                 </DialogContent>
@@ -900,7 +695,6 @@ const ScheduleTab: React.FC<ScheduleComponentProps> = ({
                 autoHideDuration={3000}
                 onClose={() => setSnackbarOpen(false)}
                 message={snackbarMessage}
-                anchorOrigin={{ vertical: 'bottom', horizontal: 'center' }}
             />
         </LocalizationProvider>
     );

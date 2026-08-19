@@ -1,30 +1,34 @@
 import React from 'react';
-import { Navigate, Outlet } from 'react-router-dom';
+import { Navigate } from 'react-router-dom';
+import { authApi } from '../api/authApi';
+
+type AllowedRole = 'STUDENT' | 'TEACHER' | 'ADMIN';
 
 interface ProtectedRouteProps {
-    allowedRoles?: Array<'STUDENT' | 'TEACHER' | 'ADMIN'>;
+    allowedRoles?: AllowedRole[];
+    children: React.ReactElement;
 }
 
-const ProtectedRoute: React.FC<ProtectedRouteProps> = ({ allowedRoles }) => {
-    const token = localStorage.getItem('token');
-    const userRole = localStorage.getItem('userRole') as 'STUDENT' | 'TEACHER' | 'ADMIN' | null;
-
-    console.log('ProtectedRoute check:', { token: !!token, userRole });
+const ProtectedRoute: React.FC<ProtectedRouteProps> = ({ allowedRoles, children }) => {
+    const token = authApi.getToken() || localStorage.getItem('token');
+    const rawRole = authApi.getRole() || localStorage.getItem('userRole');
 
     if (!token) {
-        console.log('No token, redirect to login');
         return <Navigate to="/login" replace />;
     }
 
+    const normalizedRole = rawRole
+        ? (rawRole.replace('ROLE_', '').toUpperCase() as AllowedRole)
+        : null;
+
     if (allowedRoles && allowedRoles.length > 0) {
-        if (!userRole || !allowedRoles.includes(userRole)) {
-            console.log(`Role ${userRole} not allowed, redirect to login`);
-            return <Navigate to="/login" replace />;
+        if (!normalizedRole || !allowedRoles.includes(normalizedRole)) {
+            const fallbackPath = normalizedRole === 'TEACHER' ? '/teacher' : '/student';
+            return <Navigate to={fallbackPath} replace />;
         }
     }
 
-    console.log('Access granted');
-    return <Outlet />;
+    return children;
 };
 
 export default ProtectedRoute;

@@ -1,5 +1,5 @@
 import React, { useEffect, useRef, useState } from 'react';
-import { Box, CircularProgress, Alert, Typography } from '@mui/material';
+import { Box, CircularProgress, Alert, Typography, Button } from '@mui/material';
 import { Html5Qrcode } from 'html5-qrcode';
 
 interface QRScannerProps {
@@ -11,43 +11,43 @@ const QRScanner: React.FC<QRScannerProps> = ({ onScan, onError }) => {
     const [loading, setLoading] = useState(true);
     const [error, setError] = useState<string | null>(null);
     const scannerRef = useRef<Html5Qrcode | null>(null);
-    const containerId = useRef(`qr-reader-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`);
-    const isMounted = useRef(true);
-    const isStopping = useRef(false);
+    const scannedRef = useRef<boolean>(false);
+    const isMounted = useRef<boolean>(true);
+    const containerId = useRef(`qr-reader-${Math.random().toString(36).substring(2, 9)}`);
 
     useEffect(() => {
         isMounted.current = true;
-        isStopping.current = false;
+        scannedRef.current = false;
 
         const startScanner = async () => {
             try {
-                // Проверяем DOM элемент
-                const element = document.getElementById(containerId.current);
-                if (!element) {
-                    throw new Error('DOM элемент не найден');
+                if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+                    throw new Error(
+                        'Камера недоступна. Браузер требует безопасное соединение (HTTPS) или доступ заблокирован.'
+                    );
                 }
 
-                // Проверяем камеру
-                const stream = await navigator.mediaDevices.getUserMedia({
-                    video: { facingMode: 'environment' }
-                });
-                stream.getTracks().forEach(track => track.stop());
-                console.log('✅ Камера доступна');
+                const element = document.getElementById(containerId.current);
+                if (!element) {
+                    return;
+                }
 
                 const html5QrCode = new Html5Qrcode(containerId.current);
                 scannerRef.current = html5QrCode;
 
                 const config = {
-                    fps: 15,
+                    fps: 10,
                     qrbox: { width: 250, height: 250 },
+                    aspectRatio: 1.0,
                 };
 
                 await html5QrCode.start(
-                    { facingMode: "environment" },
+                    { facingMode: 'environment' },
                     config,
                     (decodedText) => {
-                        if (isMounted.current && !isStopping.current) {
-                            console.log('✅ QR отсканирован');
+                        // Блокируем множественные срабатывания
+                        if (isMounted.current && !scannedRef.current) {
+                            scannedRef.current = true;
                             onScan(decodedText);
                         }
                     },
@@ -58,33 +58,35 @@ const QRScanner: React.FC<QRScannerProps> = ({ onScan, onError }) => {
                     setLoading(false);
                 }
             } catch (err: any) {
-                console.error('❌ Ошибка сканера:', err);
+                console.error('Ошибка инициализации камеры:', err);
                 if (isMounted.current) {
-                    setError(err?.message || 'Не удалось открыть камеру');
+                    const message = err?.message || 'Не удалось получить доступ к камере';
+                    setError(message);
                     setLoading(false);
-                    onError?.(err?.message || 'Не удалось открыть камеру');
+                    onError?.(message);
                 }
             }
         };
 
-        // Ждем рендера DOM
-        setTimeout(startScanner, 300);
+        const timer = setTimeout(startScanner, 200);
 
         return () => {
             isMounted.current = false;
-            isStopping.current = true;
+            clearTimeout(timer);
 
             if (scannerRef.current) {
-                // Останавливаем сканер с обработкой ошибок
-                scannerRef.current.stop()
-                    .then(() => {
-                        if (scannerRef.current) {
-                            scannerRef.current.clear();
-                        }
-                    })
-                    .catch((err) => {
-                        console.warn('Ошибка остановки сканера:', err);
-                    });
+                try {
+                    if (scannerRef.current.isScanning) {
+                        scannerRef.current
+                            .stop()
+                            .then(() => scannerRef.current?.clear())
+                            .catch((err) => console.warn('Ошибка при остановке камеры:', err));
+                    } else {
+                        scannerRef.current.clear();
+                    }
+                } catch (e) {
+                    console.warn('Ошибка очистки сканера:', e);
+                }
                 scannerRef.current = null;
             }
         };
@@ -92,45 +94,63 @@ const QRScanner: React.FC<QRScannerProps> = ({ onScan, onError }) => {
 
     if (error) {
         return (
-            <Alert severity="error" sx={{ width: '100%' }}>
+            <Alert
+                severity="error"
+                action={
+                    <Button color="inherit" size="small" onClick={() => window.location.reload()}>
+                        Повторить
+                    </Button>
+                }
+                sx={{ width: '100%', my: 2 }}
+            >
                 {error}
             </Alert>
         );
     }
 
     return (
-        <Box sx={{ width: '100%', maxWidth: 400, mx: 'auto' }}>
+        <Box sx={{ width: '100%', maxWidth: 400, mx: 'auto', textAlign: 'center' }}>
             {loading && (
-                <Box sx={{
-                    display: 'flex',
-                    justifyContent: 'center',
-                    alignItems: 'center',
-                    height: 300,
-                    flexDirection: 'column',
-                    gap: 2
-                }}>
-                    <CircularProgress />
+                <Box
+                    sx={{
+                        display: 'flex',
+                        justifyContent: 'center',
+                        alignItems: 'center',
+                        height: 280,
+                        flexDirection: 'column',
+                        gap: 2,
+                    }}
+                >
+                    <CircularProgress size={36} />
                     <Typography variant="body2" color="text.secondary">
-                        Запуск камеры...
+                        Подключение камеры...
                     </Typography>
                 </Box>
             )}
+
             <Box
                 id={containerId.current}
                 sx={{
                     width: '100%',
-                    minHeight: 300,
+                    minHeight: 280,
                     borderRadius: 2,
                     overflow: 'hidden',
                     bgcolor: '#000',
                     display: loading ? 'none' : 'block',
+                    boxShadow: 2,
                     '& video': {
                         width: '100% !important',
                         height: 'auto !important',
                         borderRadius: 2,
-                    }
+                    },
                 }}
             />
+
+            {!loading && (
+                <Typography variant="caption" color="text.secondary" sx={{ display: 'block', mt: 1.5 }}>
+                    Наведите камеру на динамический QR-код на экране преподавателя
+                </Typography>
+            )}
         </Box>
     );
 };

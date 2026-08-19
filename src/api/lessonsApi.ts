@@ -13,26 +13,24 @@ import type {
 } from '../types/Attendance';
 
 export const lessonsApi = {
-    // ===== РАСПИСАНИЕ =====
-    getLessonsByFilter: async (params: FetchLessonsParams) => {
-        const requestParams: Record<string, any> = {
-            page: params.page,
-            size: params.size,
-        };
-
-        if (params.date) {
-            requestParams.date = params.date;
-        }
-
+    getLessonsByFilter: async (params: FetchLessonsParams): Promise<Page<LessonResponse>> => {
         const response = await api.get<Page<LessonResponse>>('/lessons', {
-            params: requestParams,
+            params: {
+                page: params.page ?? 0,
+                size: params.size ?? 10,
+                date: params.date || undefined,
+            },
         });
         return response.data;
     },
 
-    // ===== ПРЕПОДАВАТЕЛЬ =====
     startLesson: async (lessonId: number): Promise<QRCodeResponse> => {
         const response = await api.post<QRCodeResponse>(`/lessons/${lessonId}/start`);
+        return response.data;
+    },
+
+    getNextQrToken: async (lessonId: number): Promise<QRCodeResponse> => {
+        const response = await api.get<QRCodeResponse>(`/lessons/${lessonId}/qr-token`);
         return response.data;
     },
 
@@ -40,45 +38,45 @@ export const lessonsApi = {
         await api.post(`/lessons/${lessonId}/complete`);
     },
 
-    // ===== СТУДЕНТ =====
     scanQR: async (data: ScanQRRequest): Promise<AttendanceResponse> => {
         const response = await api.post<AttendanceResponse>('/lessons/scan', data);
         return response.data;
     },
 
-    // ===== ПОСЕЩАЕМОСТЬ СТУДЕНТА =====
     getMyAttendance: async (params?: { page?: number; size?: number }): Promise<Page<AttendanceResponse>> => {
         const response = await api.get<Page<AttendanceResponse>>('/attendance/my', {
             params: {
-                page: params?.page || 0,
-                size: params?.size || 10,
+                page: params?.page ?? 0,
+                size: params?.size ?? 10,
             },
         });
         return response.data;
     },
 
-    // ===== ПОСЕЩАЕМОСТЬ ПРЕПОДАВАТЕЛЯ =====
-    getAttendanceForTeacher: async (params: AttendanceFilterParams & { page?: number; size?: number }): Promise<Page<AttendanceResponse>> => {
+    getAttendanceForTeacher: async (params: AttendanceFilterParams): Promise<Page<AttendanceResponse>> => {
         const response = await api.get<Page<AttendanceResponse>>('/attendance/teacher', {
             params: {
-                date: params.date,
-                lessonId: params.lessonId,
-                page: params.page || 0,
-                size: params.size || 10,
+                date: params.date || undefined,
+                subjectName: params.subjectName || undefined,
+                page: params.page ?? 0,
+                size: params.size ?? 10,
             },
         });
         return response.data;
     },
 
-    // ===== ОБНОВЛЕНИЕ ПОСЕЩАЕМОСТИ =====
     updateAttendance: async (attendanceId: number, data: UpdateAttendanceRequest): Promise<AttendanceResponse> => {
         const response = await api.put<AttendanceResponse>(`/attendance/${attendanceId}`, data);
         return response.data;
     },
 
-    // ===== СТАТУС ЗАНЯТИЯ =====
     getLessonStatus: async (lessonId: number): Promise<LessonResponse> => {
         const response = await api.get<LessonResponse>(`/lessons/${lessonId}/status`);
+        return response.data;
+    },
+
+    getMySubjects: async (): Promise<string[]> => {
+        const response = await api.get<string[]>('/subjects/my');
         return response.data;
     },
 
@@ -89,5 +87,5 @@ export const lessonsApi = {
             },
         });
         return response.data;
-    }
+    },
 };

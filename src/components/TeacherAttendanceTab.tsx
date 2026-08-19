@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useTransition } from 'react';
 import {
     Box,
     Typography,
@@ -22,12 +22,12 @@ import {
     IconButton,
     Snackbar,
     Stack,
-    Grid,
     FormControl,
     InputLabel,
     Select,
     MenuItem,
     LinearProgress,
+    Autocomplete,
 } from '@mui/material';
 import {
     Check,
@@ -45,20 +45,20 @@ import { AdapterDayjs } from '@mui/x-date-pickers/AdapterDayjs';
 import { Dayjs } from 'dayjs';
 import 'dayjs/locale/ru';
 import { lessonsApi } from '../api/lessonsApi';
-import type { AttendanceResponse, AttendanceType, UpdateAttendanceRequest, AttendanceFilterParams } from '../types/Attendance';
-import {staticApi} from "../api/axiosInstance.ts";
+import { api, staticApi } from '../api/axiosInstance';
+import type { AttendanceResponse, AttendanceType, UpdateAttendanceRequest } from '../types/Attendance';
 
 const TeacherAttendanceTab: React.FC = () => {
     const [attendanceList, setAttendanceList] = useState<AttendanceResponse[]>([]);
     const [loading, setLoading] = useState<boolean>(false);
+    const [loadingSubjects, setLoadingSubjects] = useState<boolean>(false);
     const [page, setPage] = useState<number>(1);
     const [totalPages, setTotalPages] = useState<number>(1);
 
-    // Фильтры
     const [selectedDate, setSelectedDate] = useState<Dayjs | null>(null);
-    const [selectedLessonId, setSelectedLessonId] = useState<number | ''>('');
+    const [selectedSubject, setSelectedSubject] = useState<string | null>(null);
+    const [subjects, setSubjects] = useState<string[]>([]);
 
-    // Диалог редактирования
     const [editDialogOpen, setEditDialogOpen] = useState<boolean>(false);
     const [selectedRecord, setSelectedRecord] = useState<AttendanceResponse | null>(null);
     const [editComment, setEditComment] = useState<string>('');
@@ -66,76 +66,77 @@ const TeacherAttendanceTab: React.FC = () => {
     const [editMark, setEditMark] = useState<AttendanceType>('PRESENT');
     const [isSubmitting, setIsSubmitting] = useState<boolean>(false);
 
-    // Загрузка файла
     const [uploading, setUploading] = useState<boolean>(false);
     const [uploadProgress, setUploadProgress] = useState<number>(0);
 
-    // Уведомления
     const [snackbarOpen, setSnackbarOpen] = useState<boolean>(false);
     const [snackbarMessage, setSnackbarMessage] = useState<string>('');
 
     const loadAttendance = useCallback(async () => {
         try {
             setLoading(true);
-            const params: AttendanceFilterParams = {};
-            if (selectedDate) {
-                params.date = selectedDate.format('YYYY-MM-DD');
-            }
-            if (selectedLessonId) {
-                params.lessonId = Number(selectedLessonId);
-            }
-
             const response = await lessonsApi.getAttendanceForTeacher({
-                ...params,
                 page: page - 1,
                 size: 10,
+                date: selectedDate ? selectedDate.format('YYYY-MM-DD') : undefined,
+                subjectName: selectedSubject || undefined,
             });
-            setAttendanceList(response.content);
-            setTotalPages(response.totalPages);
+            setAttendanceList(response.content || []);
+            setTotalPages(response.totalPages || 1);
         } catch (error) {
             console.error('Error loading attendance:', error);
+            setSnackbarMessage('Ошибка при загрузке журнала');
+            setSnackbarOpen(true);
         } finally {
             setLoading(false);
         }
-    }, [page, selectedDate, selectedLessonId]);
+    }, [page, selectedDate, selectedSubject]);
 
     useEffect(() => {
         loadAttendance();
     }, [loadAttendance]);
 
-    // ========== ПРОСМОТР ФАЙЛА ЧЕРЕЗ AXIOS ==========
+    useEffect(() => {
+        const loadSubjects = async () => {
+            try {
+                setLoadingSubjects(true);
+                const subjectList = await lessonsApi.getMySubjects();
+                setSubjects(subjectList || []);
+            } catch (error) {
+                console.error('Error loading subjects:', error);
+                setSubjects([]);
+            } finally {
+                setLoadingSubjects(false);
+            }
+        };
+        loadSubjects();
+    }, []);
 
     const handleViewFile = async (link: string) => {
         if (!link) return;
 
         try {
-            const response = await staticApi.get(link, {
-                responseType: 'blob',
-            });
-
+            const response = await staticApi.get(link, { responseType: 'blob' });
             const url = URL.createObjectURL(response.data);
             window.open(url, '_blank');
-            setTimeout(() => URL.revokeObjectURL(url), 10000);
+            setTimeout(() => URL.revokeObjectURL(url), 15000);
         } catch (error) {
-            console.error('Error loading file:', error);
-            setSnackbarMessage('Ошибка при загрузке файла');
+            console.error('Error viewing file:', error);
+            setSnackbarMessage('Ошибка при загрузке файла справки');
             setSnackbarOpen(true);
         }
     };
 
-    // ========== ЗАГРУЗКА ФАЙЛА ==========
     const handleFileUpload = async (event: React.ChangeEvent<HTMLInputElement>) => {
         const file = event.target.files?.[0];
         if (!file) return;
 
-        // Проверка типа файла
         if (!file.type.startsWith('image/')) {
             setSnackbarMessage('Можно загружать только изображения');
             setSnackbarOpen(true);
             return;
         }
 
-        // Проверка размера (макс 5MB)
         if (file.size > 5 * 1024 * 1024) {
             setSnackbarMessage('Файл не должен превышать 5MB');
             setSnackbarOpen(true);
@@ -149,25 +150,16 @@ const TeacherAttendanceTab: React.FC = () => {
             const formData = new FormData();
             formData.append('file', file);
 
-            // Эмулируем прогресс загрузки
-            const interval = setInterval(() => {
-                setUploadProgress((prev) => {
-                    if (prev >= 90) {
-                        clearInterval(interval);
-                        return 90;
+            const response = await api.post<{ url: string }>('/files/upload', formData, {
+                headers: { 'Content-Type': 'multipart/form-data' },
+                onUploadProgress: (progressEvent) => {
+                    if (progressEvent.total) {
+                        setUploadProgress(Math.round((progressEvent.loaded * 100) / progressEvent.total));
                     }
-                    return prev + 10;
-                });
-            }, 200);
+                },
+            });
 
-            const response = await lessonsApi.uploadFile(formData);
-
-            clearInterval(interval);
-            setUploadProgress(100);
-
-            await new Promise(resolve => setTimeout(resolve, 300));
-
-            setEditLink(response.url);
+            setEditLink(response.data.url);
             setSnackbarMessage('Файл успешно загружен');
             setSnackbarOpen(true);
         } catch (error) {
@@ -176,16 +168,8 @@ const TeacherAttendanceTab: React.FC = () => {
             setSnackbarOpen(true);
         } finally {
             setUploading(false);
-            setUploadProgress(0);
             event.target.value = '';
         }
-    };
-
-    // ========== УДАЛИТЬ ФАЙЛ ==========
-    const handleRemoveFile = () => {
-        setEditLink('');
-        setSnackbarMessage('Файл удален');
-        setSnackbarOpen(true);
     };
 
     const getMarkLabel = (mark: AttendanceType): string => {
@@ -209,13 +193,13 @@ const TeacherAttendanceTab: React.FC = () => {
     };
 
     const getMarkIcon = (mark: AttendanceType) => {
-        const icons: Record<AttendanceType, React.ReactNode> = {
-            PRESENT: <Check />,
-            ABSENT: <CloseIcon />,
-            LATE: <Warning />,
-            EXCUSED: <Info />,
-        };
-        return icons[mark] || null;
+        switch (mark) {
+            case 'PRESENT': return <Check fontSize="small" />;
+            case 'ABSENT': return <CloseIcon fontSize="small" />;
+            case 'LATE': return <Warning fontSize="small" />;
+            case 'EXCUSED': return <Info fontSize="small" />;
+            default: return null;
+        }
     };
 
     const handleOpenEdit = (record: AttendanceResponse) => {
@@ -256,7 +240,6 @@ const TeacherAttendanceTab: React.FC = () => {
             setSnackbarMessage('Запись успешно обновлена');
             setSnackbarOpen(true);
             handleCloseEdit();
-            loadAttendance();
         } catch (error) {
             console.error('Error updating attendance:', error);
             setSnackbarMessage('Ошибка при обновлении');
@@ -268,127 +251,140 @@ const TeacherAttendanceTab: React.FC = () => {
 
     const handleClearFilters = () => {
         setSelectedDate(null);
-        setSelectedLessonId('');
+        setSelectedSubject(null);
         setPage(1);
     };
 
     return (
         <LocalizationProvider dateAdapter={AdapterDayjs} adapterLocale="ru">
-            <Box sx={{ p: 2 }}>
-                <Typography variant="h6" gutterBottom>
-                    Посещаемость студентов
+            <Box sx={{ p: 1 }}>
+                <Typography variant="h6" fontWeight={700} gutterBottom>
+                    Журнал посещаемости студентов
                 </Typography>
 
-                {/* Фильтры */}
-                <Paper sx={{ p: 2, mb: 3 }}>
-                    <Grid container spacing={2} alignItems="center">
-                        <Grid item xs={12} md={4}>
-                            <DatePicker
-                                label="Фильтр по дате"
-                                value={selectedDate}
-                                onChange={(newDate) => {
-                                    setSelectedDate(newDate);
-                                    setPage(1);
-                                }}
-                                format="DD.MM.YYYY"
-                                slotProps={{
-                                    textField: {
-                                        fullWidth: true,
-                                        variant: 'outlined',
-                                        size: 'small',
-                                    },
-                                }}
-                            />
-                        </Grid>
-                        <Grid item xs={12} md={4}>
-                            <TextField
-                                fullWidth
-                                size="small"
-                                label="ID занятия"
-                                type="number"
-                                value={selectedLessonId}
-                                onChange={(e) => {
-                                    setSelectedLessonId(e.target.value ? Number(e.target.value) : '');
-                                    setPage(1);
-                                }}
-                            />
-                        </Grid>
-                        <Grid item xs={12} md={4}>
-                            <Stack direction="row" spacing={1}>
-                                <Button
-                                    variant="outlined"
-                                    onClick={handleClearFilters}
-                                    startIcon={<Refresh />}
-                                >
-                                    Сбросить
-                                </Button>
-                                <Button
-                                    variant="contained"
-                                    onClick={loadAttendance}
-                                    startIcon={<Refresh />}
-                                >
-                                    Применить
-                                </Button>
-                            </Stack>
-                        </Grid>
-                    </Grid>
+                <Paper elevation={1} sx={{ p: 2.5, mb: 3, borderRadius: 2 }}>
+                    <Stack direction={{ xs: 'column', md: 'row' }} spacing={2} alignItems="center">
+                        <DatePicker
+                            label="Фильтр по дате"
+                            value={selectedDate}
+                            onChange={(newDate) => {
+                                setSelectedDate(newDate);
+                                setPage(1);
+                            }}
+                            format="DD.MM.YYYY"
+                            sx={{ flex: 1, width: '100%' }}
+                            slotProps={{
+                                textField: {
+                                    size: 'small',
+                                    fullWidth: true,
+                                },
+                            }}
+                        />
+
+                        <Autocomplete
+                            options={subjects}
+                            value={selectedSubject}
+                            onChange={(_, newValue) => {
+                                setSelectedSubject(newValue);
+                                setPage(1);
+                            }}
+                            loading={loadingSubjects}
+                            sx={{ flex: 1, width: '100%' }}
+                            renderInput={(params) => (
+                                <TextField
+                                    {...params}
+                                    label="Дисциплина"
+                                    size="small"
+                                    fullWidth
+                                    placeholder="Выберите предмет"
+                                    InputProps={{
+                                        ...params.InputProps,
+                                        endAdornment: (
+                                            <>
+                                                {loadingSubjects && <CircularProgress color="inherit" size={18} />}
+                                                {params.InputProps.endAdornment}
+                                            </>
+                                        ),
+                                    }}
+                                />
+                            )}
+                        />
+
+                        <Button
+                            variant="outlined"
+                            onClick={handleClearFilters}
+                            startIcon={<Refresh />}
+                            sx={{ height: 40, px: 3, flexShrink: 0 }}
+                        >
+                            Сбросить
+                        </Button>
+                    </Stack>
                 </Paper>
 
                 {loading ? (
-                    <Box sx={{ display: 'flex', justifyContent: 'center', py: 4 }}>
+                    <Box sx={{ display: 'flex', justifyContent: 'center', py: 6 }}>
                         <CircularProgress />
                     </Box>
                 ) : attendanceList.length === 0 ? (
-                    <Alert severity="info">Нет записей о посещаемости</Alert>
+                    <Alert severity="info" sx={{ mt: 2 }}>
+                        {selectedDate || selectedSubject
+                            ? 'По выбранным критериям записей не найдено'
+                            : 'Журнал пуст'}
+                    </Alert>
                 ) : (
                     <>
-                        <TableContainer component={Paper}>
-                            <Table>
-                                <TableHead>
+                        <TableContainer component={Paper} elevation={1} sx={{ borderRadius: 2 }}>
+                            <Table sx={{ minWidth: 700 }}>
+                                <TableHead sx={{ bgcolor: 'grey.100' }}>
                                     <TableRow>
-                                        <TableCell>Студент</TableCell>
-                                        <TableCell>Дата</TableCell>
-                                        <TableCell>Занятие</TableCell>
-                                        <TableCell>Отметка</TableCell>
-                                        <TableCell>Комментарий</TableCell>
-                                        <TableCell>Справка</TableCell>
-                                        <TableCell>Действия</TableCell>
+                                        <TableCell sx={{ fontWeight: 600 }}>Студент</TableCell>
+                                        <TableCell sx={{ fontWeight: 600 }}>Дата</TableCell>
+                                        <TableCell sx={{ fontWeight: 600 }}>Дисциплина</TableCell>
+                                        <TableCell sx={{ fontWeight: 600 }}>Статус</TableCell>
+                                        <TableCell sx={{ fontWeight: 600 }}>Комментарий</TableCell>
+                                        <TableCell sx={{ fontWeight: 600 }}>Справка</TableCell>
+                                        <TableCell align="center" sx={{ fontWeight: 600 }}>Действия</TableCell>
                                     </TableRow>
                                 </TableHead>
                                 <TableBody>
                                     {attendanceList.map((record) => (
-                                        <TableRow key={record.id}>
-                                            <TableCell>{record.studentFullName || `Студент #${record.studentId}`}</TableCell>
-                                            <TableCell>{record.lessonDate || '-'}</TableCell>
-                                            <TableCell>{record.subjectName || `Занятие #${record.lessonId}`}</TableCell>
+                                        <TableRow key={record.id} hover>
+                                            <TableCell sx={{ fontWeight: 500 }}>
+                                                {record.studentFullName || `Студент #${record.studentId}`}
+                                            </TableCell>
+                                            <TableCell>{record.lessonDate || '—'}</TableCell>
+                                            <TableCell>{record.subjectName || `Пара #${record.lessonId}`}</TableCell>
                                             <TableCell>
                                                 <Chip
-                                                    icon={getMarkIcon(record.mark)}
+                                                    icon={getMarkIcon(record.mark) || undefined}
                                                     label={getMarkLabel(record.mark)}
                                                     color={getMarkColor(record.mark)}
                                                     size="small"
                                                     sx={{ fontWeight: 500 }}
                                                 />
                                             </TableCell>
-                                            <TableCell>{record.comment || '-'}</TableCell>
+                                            <TableCell sx={{ maxWidth: 200, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                                                {record.comment || '—'}
+                                            </TableCell>
                                             <TableCell>
                                                 {record.link ? (
                                                     <Button
                                                         size="small"
-                                                        onClick={() => handleViewFile(record.link)}
+                                                        onClick={() => handleViewFile(record.link!)}
                                                         startIcon={<Visibility />}
                                                     >
-                                                        Просмотр
+                                                        Справка
                                                     </Button>
-                                                ) : '-'}
+                                                ) : '—'}
                                             </TableCell>
-                                            <TableCell>
+                                            <TableCell align="center">
                                                 <IconButton
                                                     size="small"
                                                     color="primary"
                                                     onClick={() => handleOpenEdit(record)}
+                                                    title="Изменить статус посещаемости"
                                                 >
-                                                    <Edit />
+                                                    <Edit fontSize="small" />
                                                 </IconButton>
                                             </TableCell>
                                         </TableRow>
@@ -398,7 +394,7 @@ const TeacherAttendanceTab: React.FC = () => {
                         </TableContainer>
 
                         {totalPages > 1 && (
-                            <Box sx={{ display: 'flex', justifyContent: 'center', mt: 2 }}>
+                            <Box sx={{ display: 'flex', justifyContent: 'center', mt: 3 }}>
                                 <Pagination
                                     count={totalPages}
                                     page={page}
@@ -410,21 +406,20 @@ const TeacherAttendanceTab: React.FC = () => {
                     </>
                 )}
 
-                {/* Диалог редактирования для преподавателя */}
                 <Dialog open={editDialogOpen} onClose={handleCloseEdit} maxWidth="sm" fullWidth>
                     <DialogTitle>
                         Редактирование посещаемости
                         <Typography variant="body2" color="text.secondary">
-                            {selectedRecord?.studentFullName} - {selectedRecord?.subjectName}
+                            {selectedRecord?.studentFullName} — {selectedRecord?.subjectName}
                         </Typography>
                     </DialogTitle>
                     <DialogContent>
-                        <Stack spacing={2} sx={{ mt: 1 }}>
-                            <FormControl fullWidth>
-                                <InputLabel>Отметка</InputLabel>
+                        <Stack spacing={2.5} sx={{ mt: 1 }}>
+                            <FormControl fullWidth size="small">
+                                <InputLabel>Отметка присутствия</InputLabel>
                                 <Select
                                     value={editMark}
-                                    label="Отметка"
+                                    label="Отметка присутствия"
                                     onChange={(e) => setEditMark(e.target.value as AttendanceType)}
                                 >
                                     <MenuItem value="PRESENT">Присутствовал</MenuItem>
@@ -436,7 +431,7 @@ const TeacherAttendanceTab: React.FC = () => {
 
                             <TextField
                                 fullWidth
-                                label="Комментарий"
+                                label="Комментарий преподавателя"
                                 multiline
                                 rows={3}
                                 value={editComment}
@@ -444,23 +439,23 @@ const TeacherAttendanceTab: React.FC = () => {
                             />
 
                             <Box>
-                                <Typography variant="body2" color="text.secondary" gutterBottom>
-                                    Справка (фото)
+                                <Typography variant="subtitle2" color="text.secondary" gutterBottom>
+                                    Справка / Документ
                                 </Typography>
 
                                 {editLink && (
-                                    <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, mb: 1 }}>
+                                    <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, mb: 1.5, p: 1, bgcolor: 'grey.50', borderRadius: 1 }}>
                                         <Button
                                             size="small"
                                             onClick={() => handleViewFile(editLink)}
                                             startIcon={<Visibility />}
                                         >
-                                            Просмотреть текущий файл
+                                            Посмотреть прикрепленный файл
                                         </Button>
                                         <IconButton
                                             size="small"
                                             color="error"
-                                            onClick={handleRemoveFile}
+                                            onClick={() => setEditLink('')}
                                         >
                                             <Delete fontSize="small" />
                                         </IconButton>
@@ -470,38 +465,38 @@ const TeacherAttendanceTab: React.FC = () => {
                                 <input
                                     accept="image/*"
                                     style={{ display: 'none' }}
-                                    id="file-upload"
+                                    id="upload-teacher-file"
                                     type="file"
                                     onChange={handleFileUpload}
                                 />
-                                <label htmlFor="file-upload">
+                                <label htmlFor="upload-teacher-file">
                                     <Button
                                         variant="outlined"
                                         component="span"
                                         startIcon={<PhotoCamera />}
                                         disabled={uploading}
                                     >
-                                        {uploading ? 'Загрузка...' : 'Загрузить новое фото'}
+                                        {uploading ? 'Загрузка...' : editLink ? 'Заменить файл' : 'Загрузить файл'}
                                     </Button>
                                 </label>
 
                                 {uploading && (
-                                    <Box sx={{ width: '100%', mt: 1 }}>
+                                    <Box sx={{ width: '100%', mt: 1.5 }}>
                                         <LinearProgress
                                             variant="determinate"
                                             value={uploadProgress}
-                                            sx={{ height: 8, borderRadius: 4 }}
+                                            sx={{ height: 6, borderRadius: 3 }}
                                         />
-                                        <Typography variant="caption" color="text.secondary">
-                                            {uploadProgress}% загружено
+                                        <Typography variant="caption" color="text.secondary" sx={{ mt: 0.5, display: 'block' }}>
+                                            {uploadProgress}%
                                         </Typography>
                                     </Box>
                                 )}
                             </Box>
                         </Stack>
                     </DialogContent>
-                    <DialogActions>
-                        <Button onClick={handleCloseEdit}>Отмена</Button>
+                    <DialogActions sx={{ px: 3, pb: 2 }}>
+                        <Button onClick={handleCloseEdit} color="inherit">Отмена</Button>
                         <Button
                             variant="contained"
                             onClick={handleUpdateAttendance}
@@ -512,7 +507,6 @@ const TeacherAttendanceTab: React.FC = () => {
                     </DialogActions>
                 </Dialog>
 
-                {/* Уведомления */}
                 <Snackbar
                     open={snackbarOpen}
                     autoHideDuration={3000}

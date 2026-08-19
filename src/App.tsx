@@ -1,26 +1,33 @@
 import { BrowserRouter, Navigate, Route, Routes } from "react-router-dom";
 import LoginPage from "./pages/LoginPage";
 import ProtectedRoute from "./components/ProtectedRoute";
-import Layout from "./layouts/Layout.tsx";
-import VConsole from 'vconsole';
+import Layout from "./layouts/Layout";
 
 function App() {
-    if (import.meta.env.DEV) {
-        new VConsole();
-    }
-
     return (
         <BrowserRouter>
             <Routes>
                 <Route path="/login" element={<LoginPage />} />
 
-                <Route element={<ProtectedRoute allowedRoles={['STUDENT']} />}>
-                    <Route path="/student" element={<Layout role="STUDENT" />}/>
-                </Route>
+                <Route
+                    path="/student"
+                    element={
+                        <ProtectedRoute allowedRoles={['STUDENT']}>
+                            <Layout role="STUDENT" />
+                        </ProtectedRoute>
+                    }
+                />
 
-                <Route element={<ProtectedRoute allowedRoles={['TEACHER']} />}>
-                    <Route path="/teacher" element={<Layout role="TEACHER" />}/>
-                </Route>
+                <Route
+                    path="/teacher"
+                    element={
+                        <ProtectedRoute allowedRoles={['TEACHER']}>
+                            <Layout role="TEACHER" />
+                        </ProtectedRoute>
+                    }
+                />
+
+                <Route path="/" element={<Navigate to="/login" replace />} />
 
                 <Route path="*" element={<Navigate to="/login" replace />} />
             </Routes>
